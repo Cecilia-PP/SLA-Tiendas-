@@ -55,16 +55,15 @@ try:
             mes_sel = st.sidebar.multiselect("Mes:", meses, default=meses)
             df_sla = df_sla[df_sla["Mes"].isin(mes_sel) | df_sla["Mes"].isna()]
 
-        # DEFINICIÓN DE PESTAÑAS
-        tab1, tab2, tab3, tab4 = st.tabs([
+        # DEFINICIÓN DE PESTAÑAS (HOJA 2 Y 3 UNIFICADAS)
+        tab1, tab2, tab3 = st.tabs([
             "📊 1. Ranking SLA por Almacén y Tienda",
-            "📈 2. Matriz de Casuísticas por Pedido",
-            "📋 3. Modelo SLA y Reglas de Penalización",
-            "🏪 4. Auditoría Práctica por Sucursal"
+            "📈 2. Casuísticas y Modelo SLA",
+            "🏪 3. Auditoría Práctica por Sucursal"
         ])
 
         # -------------------------------------------------------------
-        # HOJA 1: RANKING SLA + METRICAS GLOBALES LIMPIAS
+        # HOJA 1: RANKING SLA (SLA PRIMER INDICADOR)
         # -------------------------------------------------------------
         with tab1:
             st.subheader("📊 Ranking SLA por Almacén y Tienda")
@@ -77,13 +76,69 @@ try:
             tot_pts_posibles_global = tot_pedidos_global * 10.0
             sla_global = (tot_pts_obtenidos_global / tot_pts_posibles_global * 10.0) if tot_pts_posibles_global > 0 else 0.0
 
+            # PUNTAJE SLA COMO PRIMER INDICADOR
             k1, k2, k3, k4 = st.columns(4)
-            k1.metric("📦 Pedidos Totales", f"{tot_pedidos_global:,}")
-            k2.metric("⚠️ Pedidos con Rectificación", f"{tot_pedidos_rectif_global:,}")
-            k3.metric("🎯 Puntos Obtenidos / Posibles", f"{tot_pts_obtenidos_global:,.1f} / {tot_pts_posibles_global:,.1f}")
-            k4.metric("⭐ SLA Promedio Red", f"{sla_global:.2f} / 10.0")
+            k1.metric("⭐ Puntaje SLA Promedio", f"{sla_global:.2f} / 10.0")
+            k2.metric("📦 Pedidos Totales", f"{tot_pedidos_global:,}")
+            k3.metric("⚠️ Pedidos con Rectificación", f"{tot_pedidos_rectif_global:,}")
+            k4.metric("🎯 Puntos Obtenidos / Posibles", f"{tot_pts_obtenidos_global:,.1f} / {tot_pts_posibles_global:,.1f}")
 
             st.markdown("---")
+
+            # GRÁFICO ESTILIZADO DE BARRAS FINAS
+            st.markdown("### 🏬 Evolución Mensual del SLA por Almacén")
+            
+            mapa_meses = {1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"}
+            
+            df_sla_mes = df_sla.copy()
+            df_sla_mes["Mes_Num"] = pd.to_numeric(df_sla_mes["Mes"], errors="coerce").fillna(0).astype(int)
+            df_sla_mes["Nombre_Mes"] = df_sla_mes["Mes_Num"].map(mapa_meses).fillna("Sin Mes")
+
+            df_alm_mes = df_sla_mes.groupby(["Mes_Num", "Nombre_Mes", "Almacen"], as_index=False).agg(
+                Pedidos_Totales=("Pedido", "count"),
+                Puntos_Obtenidos=("Puntos_Obtenidos", "sum")
+            )
+            df_alm_mes["Puntos_Posibles"] = df_alm_mes["Pedidos_Totales"] * 10.0
+            df_alm_mes["Puntaje SLA"] = (df_alm_mes["Puntos_Obtenidos"] / df_alm_mes["Puntos_Posibles"]) * 10.0
+            df_alm_mes["Puntaje SLA"] = df_alm_mes["Puntaje SLA"].fillna(0.0)
+            df_alm_mes["Etiqueta_Almacen"] = "Almacén " + df_alm_mes["Almacen"].astype(str)
+            
+            df_alm_mes = df_alm_mes.sort_values(by=["Mes_Num", "Etiqueta_Almacen"]).reset_index(drop=True)
+
+            colores_alm = ["#2b5c8f", "#2ba884", "#e07a5f", "#f4a261"]
+
+            fig_mes_alm = px.bar(
+                df_alm_mes,
+                x="Nombre_Mes",
+                y="Puntaje SLA",
+                color="Etiqueta_Almacen",
+                barmode="group",
+                text="Puntaje SLA",
+                color_discrete_sequence=colores_alm
+            )
+            
+            fig_mes_alm.update_traces(
+                texttemplate='<b>%{text:.2f}</b> ⭐', 
+                textposition='outside',
+                marker_line_color='rgb(8,48,107)',
+                marker_line_width=1,
+                opacity=0.9
+            )
+            
+            fig_mes_alm.update_layout(
+                yaxis=dict(range=[7.0, 10.2], title="Puntaje SLA (Escala 7 a 10)", dtick=0.5, gridcolor="#e5e5e5"),
+                xaxis=dict(title="Mes"),
+                legend=dict(title="Almacén", orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                height=380,
+                bargap=0.45,
+                bargroupgap=0.15,
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)"
+            )
+            st.plotly_chart(fig_mes_alm, use_container_width=True)
+
+            st.markdown("---")
+            st.markdown("### 🏪 Detalle por Almacén y Tienda")
 
             tb_sla = df_sla.groupby(["Almacen", "Tienda"], as_index=False).agg(
                 Pedidos_Totales=("Pedido", "count"),
@@ -143,33 +198,54 @@ try:
                 }
             )
 
-        # HOJA 2: MATRIZ GENERAL DE CASUÍSTICAS
+        # -------------------------------------------------------------
+        # HOJA 2: CASUÍSTICAS Y MODELO SLA (UNIFICADAS Y SIN MONTO)
+        # -------------------------------------------------------------
         with tab2:
             st.subheader("📈 Matriz Ejecutiva de Casuísticas por Pedido")
             tot_p = len(df_sla)
+            
+            # Agrupación limpia sin incluir columna de Monto
             cas_sum = df_sla.groupby("Casuistica", as_index=False).agg(
                 Cantidad_Pedidos=("Pedido", "count"),
-                Lineas_Rectificadas=("Lineas_Rectificadas", "sum"),
-                Monto_Total=("Monto_Rectificacion", "sum")
+                Lineas_Rectificadas=("Lineas_Rectificadas", "sum")
             )
-            cas_sum["% Part. Pedidos"] = (cas_sum["Cantidad_Pedidos"] / tot_p) * 100
-            st.dataframe(cas_sum, hide_index=True)
+            cas_sum["% Participación Pedidos"] = (cas_sum["Cantidad_Pedidos"] / tot_p) * 100
+            
+            # Reordenar según prioridad operativa
+            orden_cas = ["Pedido Perfecto", "Sobrante Neto", "Sustitución Misma Subfamilia", "Sustitución Distinta Subfamilia", "Faltante Neto", "Etiquetas Cambiadas"]
+            cas_sum["Casuistica"] = pd.Categorical(cas_sum["Casuistica"], categories=orden_cas, ordered=True)
+            cas_sum = cas_sum.sort_values("Casuistica").reset_index(drop=True)
 
-        # HOJA 3: MODELO Y REGLAS DE PENALIZACIÓN
-        with tab3:
-            st.subheader("📋 Matriz Oficial de Penalizaciones SLA")
+            st.dataframe(
+                cas_sum,
+                hide_index=True,
+                column_config={
+                    "Casuistica": st.column_config.Column("Casuística Operativa"),
+                    "Cantidad_Pedidos": st.column_config.NumberColumn("Cantidad de Pedidos", format="%d"),
+                    "Lineas_Rectificadas": st.column_config.NumberColumn("Líneas Rectificadas", format="%d"),
+                    "% Participación Pedidos": st.column_config.NumberColumn("% Part. Pedidos", format="%.2f %%")
+                }
+            )
+
+            st.markdown("---")
+            st.subheader("📋 Reglas de Puntaje y Evaluación SLA por Pedido")
+            
+            # Término "Puntaje" en lugar de "Penalización"
             matriz_p = pd.DataFrame([
-                {"Casuística": "Pedido Perfecto", "Descuento": "0.0 Pts", "Nota Pedido": "10.0 / 10"},
-                {"Casuística": "Sobrante Neto", "Descuento": "-1.0 Pt", "Nota Pedido": "9.0 / 10"},
-                {"Casuística": "Sustitución Misma Subfamilia", "Descuento": "-2.5 Pts", "Nota Pedido": "7.5 / 10"},
-                {"Casuística": "Sustitución Distinta Subfamilia", "Descuento": "-4.5 Pts", "Nota Pedido": "5.5 / 10"},
-                {"Casuística": "Faltante Neto", "Descuento": "-6.0 Pts", "Nota Pedido": "4.0 / 10"},
-                {"Casuística": "Etiquetas Cambiadas", "Descuento": "-10.0 Pts", "Nota Pedido": "0.0 / 10"}
+                {"Casuística Operativa": "Pedido Perfecto", "Descuento Aplicado": "0.0 Pts", "Puntaje por Pedido": "10.0 / 10", "Justificación Cualitativa y Operacional": "Envío sin rectificaciones. Servicio 100% conforme."},
+                {"Casuística Operativa": "Sobrante Neto", "Descuento Aplicado": "-1.0 Pt", "Puntaje por Pedido": "9.0 / 10", "Justificación Cualitativa y Operacional": "Excedente físico entregado. Leve impacto en stock/recepción."},
+                {"Casuística Operativa": "Sustitución Misma Subfamilia", "Descuento Aplicado": "-2.5 Pts", "Puntaje por Pedido": "7.5 / 10", "Justificación Cualitativa y Operacional": "Error de picking de productos equivalentes (ej. Yogur Entero por Light)."},
+                {"Casuística Operativa": "Sustitución Distinta Subfamilia", "Descuento Aplicado": "-4.5 Pts", "Puntaje por Pedido": "5.5 / 10", "Justificación Cualitativa y Operacional": "Error grave de picking entre categorías disímiles."},
+                {"Casuística Operativa": "Faltante Neto", "Descuento Aplicado": "-6.0 Pts", "Puntaje por Pedido": "4.0 / 10", "Justificación Cualitativa y Operacional": "Despacho incompleto. Quiebre de stock en góndola."},
+                {"Casuística Operativa": "Etiquetas Cambiadas", "Descuento Aplicado": "-10.0 Pts", "Puntaje por Pedido": "0.0 / 10", "Justificación Cualitativa y Operacional": "Error masivo logístico (>10 líneas cruzadas). Requerimiento de auditoría total."}
             ])
             st.dataframe(matriz_p, hide_index=True)
 
-        # HOJA 4: AUDITORÍA INDIVIDUAL
-        with tab4:
+        # -------------------------------------------------------------
+        # HOJA 3: AUDITORÍA INDIVIDUAL POR SUCURSAL
+        # -------------------------------------------------------------
+        with tab3:
             st.subheader("🏪 Auditoría Práctica y Detalle de Rectificaciones por Sucursal")
             
             tiendas_l = sorted([str(x) for x in df_sla["Tienda"].dropna().unique() if str(x) != "nan"])
@@ -185,10 +261,10 @@ try:
             nota_sla_t = (pts_obtenidos_t / pts_posibles_t * 10.0) if pts_posibles_t > 0 else 0.0
 
             m1, m2, m3, m4 = st.columns(4)
-            m1.metric("📦 Pedidos Totales Recibidos", f"{tot_p_t:,}")
-            m2.metric("⚠️ Pedidos con Rectificaciones", f"{tot_p_rect_t:,}")
-            m3.metric("🎯 Puntos Obtenidos / Posibles", f"{pts_obtenidos_t:,.1f} / {pts_posibles_t:,.1f}")
-            m4.metric("⭐ Nota SLA Tienda", f"{nota_sla_t:.2f} / 10.0")
+            m1.metric("⭐ Puntaje SLA Tienda", f"{nota_sla_t:.2f} / 10.0")
+            m2.metric("📦 Pedidos Totales Recibidos", f"{tot_p_t:,}")
+            m3.metric("⚠️ Pedidos con Rectificaciones", f"{tot_p_rect_t:,}")
+            m4.metric("🎯 Puntos Obtenidos / Posibles", f"{pts_obtenidos_t:,.1f} / {pts_posibles_t:,.1f}")
 
             st.markdown("---")
             st.subheader("🔎 Detalle de Rectificaciones Registradas")
