@@ -6,6 +6,18 @@ import os
 st.set_page_config(page_title="Tablero Satisfacción - SLA Tiendas", layout="wide")
 st.markdown('<meta name="google" content="notranslate">', unsafe_allow_html=True)
 
+# CSS para centrar y permitir saltos de línea limpios en encabezados
+st.markdown("""
+<style>
+    div[data-testid="stTable"] th, div[data-testid="stDataFrame"] th {
+        white-space: pre-wrap !important;
+        word-wrap: break-word !important;
+        text-align: center !important;
+        vertical-align: middle !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 st.title("📦 Tablero SLA y Satisfacción de Tienda")
 
 @st.cache_data
@@ -52,30 +64,24 @@ try:
         ])
 
         # -------------------------------------------------------------
-        # HOJA 1: RANKING SLA (PUNTOS OBTENIDOS / PUNTOS POSIBLES)
+        # HOJA 1: RANKING SLA COMPACTO
         # -------------------------------------------------------------
         with tab1:
             st.subheader("📊 Ranking SLA por Almacén y Tienda")
             st.caption("Cálculo: (Suma de Puntos Obtenidos / Suma de Puntos Posibles de Pedidos) × 10. Ordenado de menor a mayor SLA.")
 
-            # Agrupamiento exacto
             tb_sla = df_sla.groupby(["Almacen", "Tienda"], as_index=False).agg(
                 Pedidos_Totales=("Pedido", "count"),
                 Pedidos_Con_Rectificaciones=("Casuistica", lambda x: (x != "Pedido Perfecto").sum()),
                 Puntos_Obtenidos=("Puntos_Obtenidos", "sum")
             )
 
-            # Puntos Posibles = Cantidad de Pedidos * 10 Pts
             tb_sla["Puntos_Posibles"] = tb_sla["Pedidos_Totales"] * 10.0
-            
-            # Nota Final SLA en Escala 1 a 10
             tb_sla["Puntaje SLA"] = (tb_sla["Puntos_Obtenidos"] / tb_sla["Puntos_Posibles"]) * 10.0
             tb_sla["Puntaje SLA"] = tb_sla["Puntaje SLA"].fillna(0.0)
 
-            # Ordenar de menor a mayor
             tb_sla_sorted = tb_sla.sort_values(by="Puntaje SLA", ascending=True).reset_index(drop=True)
 
-            # Fila de Totales Generales
             tot_pedidos = tb_sla["Pedidos_Totales"].sum()
             tot_rectif = tb_sla["Pedidos_Con_Rectificaciones"].sum()
             tot_pts_obtenidos = tb_sla["Puntos_Obtenidos"].sum()
@@ -94,31 +100,39 @@ try:
 
             tb_sla_display = pd.concat([tb_sla_sorted, fila_total], ignore_index=True)
 
+            # Nombres con salto de línea manual para que no ensanchen la columna
+            col_totales_lbl = "Pedidos\nTotales"
+            col_rectif_lbl = "Pedidos con\nRectificaciones"
+            col_pts_obtenidos_lbl = "Puntos\nObtenidos"
+            col_pts_posibles_lbl = "Puntos\nPosibles"
+            col_sla_lbl = "Puntaje SLA\n(1 a 10)"
+
             tb_sla_display = tb_sla_display.rename(columns={
                 "Almacen": "Almacén",
                 "Tienda": "Tienda",
-                "Pedidos_Totales": "Cantidad de Pedidos Totales",
-                "Pedidos_Con_Rectificaciones": "Cantidad de Pedidos con Rectificaciones",
-                "Puntos_Obtenidos": "Puntos Obtenidos",
-                "Puntos_Posibles": "Puntos Posibles"
+                "Pedidos_Totales": col_totales_lbl,
+                "Pedidos_Con_Rectificaciones": col_rectif_lbl,
+                "Puntos_Obtenidos": col_pts_obtenidos_lbl,
+                "Puntos_Posibles": col_pts_posibles_lbl,
+                "Puntaje SLA": col_sla_lbl
             })
 
+            # Mostrar tabla compacta
             st.dataframe(
                 tb_sla_display[[
-                    "Almacén", "Tienda", "Cantidad de Pedidos Totales", 
-                    "Cantidad de Pedidos con Rectificaciones", 
-                    "Puntos Obtenidos", "Puntos Posibles", "Puntaje SLA"
+                    "Almacén", "Tienda", col_totales_lbl, 
+                    col_rectif_lbl, col_pts_obtenidos_lbl, 
+                    col_pts_posibles_lbl, col_sla_lbl
                 ]],
-                width="stretch",
                 hide_index=True,
                 column_config={
-                    "Almacén": st.column_config.Column("Almacén"),
-                    "Tienda": st.column_config.Column("Tienda"),
-                    "Cantidad de Pedidos Totales": st.column_config.NumberColumn("Cantidad de Pedidos Totales", format="%d"),
-                    "Cantidad de Pedidos con Rectificaciones": st.column_config.NumberColumn("Cantidad de Pedidos con Rectificaciones", format="%d"),
-                    "Puntos Obtenidos": st.column_config.NumberColumn("Puntos Obtenidos", format="%.1f Pts"),
-                    "Puntos Posibles": st.column_config.NumberColumn("Puntos Posibles", format="%.1f Pts"),
-                    "Puntaje SLA": st.column_config.NumberColumn("Puntaje SLA (1 a 10)", format="%.2f ⭐")
+                    "Almacén": st.column_config.Column("Almacén", width="small"),
+                    "Tienda": st.column_config.Column("Tienda", width="small"),
+                    col_totales_lbl: st.column_config.NumberColumn(col_totales_lbl, format="%d", width="small"),
+                    col_rectif_lbl: st.column_config.NumberColumn(col_rectif_lbl, format="%d", width="small"),
+                    col_pts_obtenidos_lbl: st.column_config.NumberColumn(col_pts_obtenidos_lbl, format="%.1f Pts", width="small"),
+                    col_pts_posibles_lbl: st.column_config.NumberColumn(col_pts_posibles_lbl, format="%.1f Pts", width="small"),
+                    col_sla_lbl: st.column_config.NumberColumn(col_sla_lbl, format="%.2f ⭐", width="small")
                 }
             )
 
@@ -132,7 +146,7 @@ try:
                 Monto_Total=("Monto_Rectificacion", "sum")
             )
             cas_sum["% Part. Pedidos"] = (cas_sum["Cantidad_Pedidos"] / tot_p) * 100
-            st.dataframe(cas_sum, width="stretch", hide_index=True)
+            st.dataframe(cas_sum, hide_index=True)
 
         # HOJA 3: MODELO Y REGLAS DE PENALIZACIÓN
         with tab3:
@@ -145,7 +159,7 @@ try:
                 {"Casuística": "Faltante Neto", "Descuento": "-6.0 Pts", "Nota Pedido": "4.0 / 10"},
                 {"Casuística": "Etiquetas Cambiadas", "Descuento": "-10.0 Pts", "Nota Pedido": "0.0 / 10"}
             ])
-            st.dataframe(matriz_p, width="stretch", hide_index=True)
+            st.dataframe(matriz_p, hide_index=True)
 
         # HOJA 4: AUDITORÍA INDIVIDUAL
         with tab4:
