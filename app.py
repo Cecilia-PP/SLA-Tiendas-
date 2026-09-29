@@ -64,13 +64,13 @@ try:
         ])
 
         # -------------------------------------------------------------
-        # HOJA 1: RANKING SLA + METRICAS GLOBALES DE PEDIDOS TOTALES
+        # HOJA 1: RANKING SLA + METRICAS GLOBALES LIMPIAS
         # -------------------------------------------------------------
         with tab1:
             st.subheader("📊 Ranking SLA por Almacén y Tienda")
             st.caption("Cálculo: (Suma de Puntos Obtenidos / Suma de Puntos Posibles de Pedidos) × 10. Ordenado de menor a mayor SLA.")
 
-            # Indicadores Metricos Globales
+            # Indicadores Métricos Globales
             tot_pedidos_global = len(df_sla)
             tot_pedidos_rectif_global = (df_sla["Casuistica"] != "Pedido Perfecto").sum()
             tot_pts_obtenidos_global = df_sla["Puntos_Obtenidos"].sum()
@@ -78,7 +78,7 @@ try:
             sla_global = (tot_pts_obtenidos_global / tot_pts_posibles_global * 10.0) if tot_pts_posibles_global > 0 else 0.0
 
             k1, k2, k3, k4 = st.columns(4)
-            k1.metric("📦 Pedidos Totales (BDMVTAL)", f"{tot_pedidos_global:,}")
+            k1.metric("📦 Pedidos Totales", f"{tot_pedidos_global:,}")
             k2.metric("⚠️ Pedidos con Rectificación", f"{tot_pedidos_rectif_global:,}")
             k3.metric("🎯 Puntos Obtenidos / Posibles", f"{tot_pts_obtenidos_global:,.1f} / {tot_pts_posibles_global:,.1f}")
             k4.metric("⭐ SLA Promedio Red", f"{sla_global:.2f} / 10.0")
