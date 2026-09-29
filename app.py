@@ -63,11 +63,13 @@ try:
         ])
 
         # -------------------------------------------------------------
-        # HOJA 1: RANKING SLA (SLA PRIMER INDICADOR)
+        # HOJA 1: RANKING SLA (SLA PRIMER INDICADOR Y TOOLTIP ?)
         # -------------------------------------------------------------
         with tab1:
-            st.subheader("📊 Ranking SLA por Almacén y Tienda")
-            st.caption("Cálculo: (Suma de Puntos Obtenidos / Suma de Puntos Posibles de Pedidos) × 10. Ordenado de menor a mayor SLA.")
+            st.subheader(
+                "📊 Ranking SLA por Almacén y Tienda",
+                help="Cálculo: (Suma de Puntos Obtenidos / Suma de Puntos Posibles de Pedidos) × 10. Ordenado de menor a mayor SLA."
+            )
 
             # Indicadores Métricos Globales
             tot_pedidos_global = len(df_sla)
@@ -199,20 +201,18 @@ try:
             )
 
         # -------------------------------------------------------------
-        # HOJA 2: CASUÍSTICAS Y MODELO SLA (UNIFICADAS Y SIN MONTO)
+        # HOJA 2: CASUÍSTICAS Y MODELO SLA
         # -------------------------------------------------------------
         with tab2:
             st.subheader("📈 Matriz Ejecutiva de Casuísticas por Pedido")
             tot_p = len(df_sla)
             
-            # Agrupación limpia sin incluir columna de Monto
             cas_sum = df_sla.groupby("Casuistica", as_index=False).agg(
                 Cantidad_Pedidos=("Pedido", "count"),
                 Lineas_Rectificadas=("Lineas_Rectificadas", "sum")
             )
             cas_sum["% Participación Pedidos"] = (cas_sum["Cantidad_Pedidos"] / tot_p) * 100
             
-            # Reordenar según prioridad operativa
             orden_cas = ["Pedido Perfecto", "Sobrante Neto", "Sustitución Misma Subfamilia", "Sustitución Distinta Subfamilia", "Faltante Neto", "Etiquetas Cambiadas"]
             cas_sum["Casuistica"] = pd.Categorical(cas_sum["Casuistica"], categories=orden_cas, ordered=True)
             cas_sum = cas_sum.sort_values("Casuistica").reset_index(drop=True)
@@ -231,7 +231,6 @@ try:
             st.markdown("---")
             st.subheader("📋 Reglas de Puntaje y Evaluación SLA por Pedido")
             
-            # Término "Puntaje" en lugar de "Penalización"
             matriz_p = pd.DataFrame([
                 {"Casuística Operativa": "Pedido Perfecto", "Descuento Aplicado": "0.0 Pts", "Puntaje por Pedido": "10.0 / 10", "Justificación Cualitativa y Operacional": "Envío sin rectificaciones. Servicio 100% conforme."},
                 {"Casuística Operativa": "Sobrante Neto", "Descuento Aplicado": "-1.0 Pt", "Puntaje por Pedido": "9.0 / 10", "Justificación Cualitativa y Operacional": "Excedente físico entregado. Leve impacto en stock/recepción."},
