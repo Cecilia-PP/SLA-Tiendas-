@@ -55,7 +55,26 @@ try:
             mes_sel = st.sidebar.multiselect("Mes:", meses, default=meses)
             df_sla = df_sla[df_sla["Mes"].isin(mes_sel) | df_sla["Mes"].isna()]
 
-        # DEFINICIÓN DE PESTAÑAS (HOJA 2 Y 3 UNIFICADAS)
+        # -------------------------------------------------------------
+        # 🎯 FILTRO DE OUTLIERS: EVALUADO POR RELACIÓN ALMACÉN - TIENDA
+        # -------------------------------------------------------------
+        st.sidebar.markdown("---")
+        st.sidebar.header("⚠️ Filtro de Outliers")
+        excluir_outliers = st.sidebar.checkbox("Excluir relaciones bajo volumen", value=False)
+
+        if excluir_outliers:
+            min_pedidos_rel = st.sidebar.number_input("Mínimo de pedidos por Tienda:", min_value=1, value=10, step=1)
+            
+            conteo_rel = df_sla.groupby(["Almacen", "Tienda"])["Pedido"].count().reset_index()
+            rel_validas = conteo_rel[conteo_rel["Pedido"] >= min_pedidos_rel]
+            
+            pedidos_iniciales = len(df_sla)
+            df_sla = df_sla.merge(rel_validas[["Almacen", "Tienda"]], on=["Almacen", "Tienda"], how="inner")
+            pedidos_filtrados = pedidos_iniciales - len(df_sla)
+            
+            st.sidebar.caption(f"ℹ️ Se excluyeron **{pedidos_filtrados}** pedidos de tiendas/rutas con menos de {min_pedidos_rel} envíos.")
+
+        # DEFINICIÓN DE PESTAÑAS
         tab1, tab2, tab3 = st.tabs([
             "📊 1. Ranking SLA por Almacén y Tienda",
             "📈 2. Casuísticas y Modelo SLA",
@@ -63,7 +82,7 @@ try:
         ])
 
         # -------------------------------------------------------------
-        # HOJA 1: RANKING SLA (SLA PRIMER INDICADOR Y TOOLTIP ?)
+        # HOJA 1: RANKING SLA
         # -------------------------------------------------------------
         with tab1:
             st.subheader(
@@ -151,14 +170,19 @@ try:
             tb_sla["Puntos_Posibles"] = tb_sla["Pedidos_Totales"] * 10.0
             tb_sla["Puntaje SLA"] = (tb_sla["Puntos_Obtenidos"] / tb_sla["Puntos_Posibles"]) * 10.0
             tb_sla["Puntaje SLA"] = tb_sla["Puntaje SLA"].fillna(0.0)
+            
+            tb_sla["Tasa_Aprobacion"] = ((tb_sla["Pedidos_Totales"] - tb_sla["Pedidos_Con_Rectificaciones"]) / tb_sla["Pedidos_Totales"]) * 100.0
 
             tb_sla_sorted = tb_sla.sort_values(by="Puntaje SLA", ascending=True).reset_index(drop=True)
+
+            tasa_aprob_global = ((tot_pedidos_global - tot_pedidos_rectif_global) / tot_pedidos_global * 100.0) if tot_pedidos_global > 0 else 0.0
 
             fila_total = pd.DataFrame([{
                 "Almacen": "Total General",
                 "Tienda": "—",
                 "Pedidos_Totales": tot_pedidos_global,
                 "Pedidos_Con_Rectificaciones": tot_pedidos_rectif_global,
+                "Tasa_Aprobacion": tasa_aprob_global,
                 "Puntos_Obtenidos": tot_pts_obtenidos_global,
                 "Puntos_Posibles": tot_pts_posibles_global,
                 "Puntaje SLA": sla_global
@@ -168,6 +192,7 @@ try:
 
             col_totales_lbl = "Pedidos\nTotales"
             col_rectif_lbl = "Pedidos con\nRectificaciones"
+            col_tasa_lbl = "% Tasa\nAprobación"
             col_pts_obtenidos_lbl = "Puntos\nObtenidos"
             col_pts_posibles_lbl = "Puntos\nPosibles"
             col_sla_lbl = "Puntaje SLA\n(1 a 10)"
@@ -177,6 +202,7 @@ try:
                 "Tienda": "Tienda",
                 "Pedidos_Totales": col_totales_lbl,
                 "Pedidos_Con_Rectificaciones": col_rectif_lbl,
+                "Tasa_Aprobacion": col_tasa_lbl,
                 "Puntos_Obtenidos": col_pts_obtenidos_lbl,
                 "Puntos_Posibles": col_pts_posibles_lbl,
                 "Puntaje SLA": col_sla_lbl
@@ -185,7 +211,7 @@ try:
             st.dataframe(
                 tb_sla_display[[
                     "Almacén", "Tienda", col_totales_lbl, 
-                    col_rectif_lbl, col_pts_obtenidos_lbl, 
+                    col_rectif_lbl, col_tasa_lbl, col_pts_obtenidos_lbl, 
                     col_pts_posibles_lbl, col_sla_lbl
                 ]],
                 hide_index=True,
@@ -194,11 +220,70 @@ try:
                     "Tienda": st.column_config.Column("Tienda", width="small"),
                     col_totales_lbl: st.column_config.NumberColumn(col_totales_lbl, format="%d", width="small"),
                     col_rectif_lbl: st.column_config.NumberColumn(col_rectif_lbl, format="%d", width="small"),
+                    col_tasa_lbl: st.column_config.NumberColumn(col_tasa_lbl, format="%.2f %%", width="small"),
                     col_pts_obtenidos_lbl: st.column_config.NumberColumn(col_pts_obtenidos_lbl, format="%.1f Pts", width="small"),
                     col_pts_posibles_lbl: st.column_config.NumberColumn(col_pts_posibles_lbl, format="%.1f Pts", width="small"),
                     col_sla_lbl: st.column_config.NumberColumn(col_sla_lbl, format="%.2f ⭐", width="small")
                 }
             )
+
+            # CUADRO OPERATIVO DE ERRORES SEGÚN CASUÍSTICA Y ORIGEN %
+            st.markdown("---")
+            st.markdown("### 📊 Desglose de Errores por Casuística y Origen (Tienda vs. Almacén)")
+            
+            df_errores_filtro = df_sla[df_sla["Casuistica"] != "Pedido Perfecto"].copy()
+
+            if not df_errores_filtro.empty:
+                tot_ped_error = len(df_errores_filtro)
+                
+                pedidos_filtrados_set = set(df_errores_filtro["Pedido"].dropna().unique())
+                df_rect_fil = df_rect[df_rect["Pedido"].isin(pedidos_filtrados_set) & (df_rect["Estado"].astype(str).str.upper() != "A")].copy()
+                
+                proc_por_pedido = df_rect_fil.groupby("Pedido")["Procedencia"].apply(lambda x: list(set(x.astype(str).str.upper()))).to_dict()
+
+                def calc_origen(pedido):
+                    procs = proc_por_pedido.get(pedido, [])
+                    if "T" in procs and "G" in procs:
+                        return "Mixto"
+                    elif "T" in procs:
+                        return "Tienda (T)"
+                    elif "G" in procs:
+                        return "Almacén (G)"
+                    return "Sin Datos"
+
+                df_errores_filtro["Origen_Grabacion"] = df_errores_filtro["Pedido"].apply(calc_origen)
+
+                tb_cas_origen = df_errores_filtro.groupby("Casuistica", as_index=False).agg(
+                    Cantidad_Pedidos=("Pedido", "count"),
+                    Origen_Tienda=("Origen_Grabacion", lambda x: (x == "Tienda (T)").sum()),
+                    Origen_Almacen=("Origen_Grabacion", lambda x: (x == "Almacén (G)").sum()),
+                    Origen_Mixto=("Origen_Grabacion", lambda x: (x == "Mixto").sum())
+                )
+
+                tb_cas_origen["% Part. sobre Errores"] = (tb_cas_origen["Cantidad_Pedidos"] / tot_ped_error) * 100
+                tb_cas_origen["% Origen Tienda (T)"] = (tb_cas_origen["Origen_Tienda"] / tb_cas_origen["Cantidad_Pedidos"]) * 100
+                tb_cas_origen["% Origen Almacén (G)"] = (tb_cas_origen["Origen_Almacen"] / tb_cas_origen["Cantidad_Pedidos"]) * 100
+
+                orden_cas = ["Sobrante Neto", "Sustitución Misma Subfamilia", "Sustitución Distinta Subfamilia", "Faltante Neto", "Etiquetas Cambiadas"]
+                tb_cas_origen["Casuistica"] = pd.Categorical(tb_cas_origen["Casuistica"], categories=orden_cas, ordered=True)
+                tb_cas_origen = tb_cas_origen.sort_values("Casuistica").reset_index(drop=True)
+
+                st.dataframe(
+                    tb_cas_origen[[
+                        "Casuistica", "Cantidad_Pedidos", "% Part. sobre Errores",
+                        "% Origen Tienda (T)", "% Origen Almacén (G)"
+                    ]],
+                    hide_index=True,
+                    column_config={
+                        "Casuistica": st.column_config.Column("Casuística / Tipo de Error", width="medium"),
+                        "Cantidad_Pedidos": st.column_config.NumberColumn("Cantidad Pedidos", format="%d", width="small"),
+                        "% Part. sobre Errores": st.column_config.NumberColumn("% Part. sobre Errores", format="%.2f %%", width="small"),
+                        "% Origen Tienda (T)": st.column_config.NumberColumn("% Origen Tienda (T)", format="%.1f %%", width="small"),
+                        "% Origen Almacén (G)": st.column_config.NumberColumn("% Origen Almacén (G)", format="%.1f %%", width="small")
+                    }
+                )
+            else:
+                st.success("🎉 No hay errores ni rectificaciones registradas para la selección actual.")
 
         # -------------------------------------------------------------
         # HOJA 2: CASUÍSTICAS Y MODELO SLA
@@ -233,7 +318,7 @@ try:
             
             matriz_p = pd.DataFrame([
                 {"Casuística Operativa": "Pedido Perfecto", "Descuento Aplicado": "0.0 Pts", "Puntaje por Pedido": "10.0 / 10", "Justificación Cualitativa y Operacional": "Envío sin rectificaciones. Servicio 100% conforme."},
-                {"Casuística Operativa": "Sobrante Neto", "Descuento Aplicado": "-1.0 Pt", "Puntaje por Pedido": "9.0 / 10", "Justificación Cualitativa y Operacional": "Excedente físico entregado. Leve impacto en stock/recepción."},
+                {"Casuística Operativa": "Sobrante Neto", "Descuento Aplicado": "0.0 Pts", "Puntaje por Pedido": "10.0 / 10", "Justificación Cualitativa y Operacional": "Excedente físico entregado. No descuenta puntaje SLA."},
                 {"Casuística Operativa": "Sustitución Misma Subfamilia", "Descuento Aplicado": "-2.5 Pts", "Puntaje por Pedido": "7.5 / 10", "Justificación Cualitativa y Operacional": "Error de picking de productos equivalentes (ej. Yogur Entero por Light)."},
                 {"Casuística Operativa": "Sustitución Distinta Subfamilia", "Descuento Aplicado": "-4.5 Pts", "Puntaje por Pedido": "5.5 / 10", "Justificación Cualitativa y Operacional": "Error grave de picking entre categorías disímiles."},
                 {"Casuística Operativa": "Faltante Neto", "Descuento Aplicado": "-6.0 Pts", "Puntaje por Pedido": "4.0 / 10", "Justificación Cualitativa y Operacional": "Despacho incompleto. Quiebre de stock en góndola."},
@@ -242,7 +327,7 @@ try:
             st.dataframe(matriz_p, hide_index=True)
 
         # -------------------------------------------------------------
-        # HOJA 3: AUDITORÍA INDIVIDUAL POR SUCURSAL
+        # HOJA 3: AUDITORÍA INDIVIDUAL
         # -------------------------------------------------------------
         with tab3:
             st.subheader("🏪 Auditoría Práctica y Detalle de Rectificaciones por Sucursal")
@@ -266,7 +351,28 @@ try:
             m4.metric("🎯 Puntos Obtenidos / Posibles", f"{pts_obtenidos_t:,.1f} / {pts_posibles_t:,.1f}")
 
             st.markdown("---")
-            st.subheader("🔎 Detalle de Rectificaciones Registradas")
+            
+            glosario_txt = """GLOSARIO:
+
+1. Procedencia:
+   • 'G' = Almacén (Generado/detectado en Centro de Distribución)
+   • 'T' = Tienda (Registrado/detectado en tienda)
+
+2. Motivo:
+   • 'F' = Falta (Faltante de mercadería)
+   • 'S' = Sobra (Sobrante de mercadería)
+
+3. Estado:
+   • 'A' = Automática (Mercadería no facturada / regularización) 
+           ⚠ EXCLUIDA DEL CÁLCULO DEL SLA (No penaliza el puntaje).
+   • 'M' = Confirmada (Afecta SLA según motivo)
+   • 'P' = Pendiente (Afecta SLA según motivo)
+   • 'R' = Rechazada (Afecta SLA según motivo)
+
+📌 NOTA TÉCNICA CÁLCULO SLA:
+Las líneas con Estado 'A' se muestran en la tabla inferior para trazabilidad, pero se excluyen del cálculo de penalizaciones SLA, considerándose como Pedidos Perfectos si no registran otros motivos R, M o P."""
+
+            st.subheader("🔎 Detalle de Rectificaciones Registradas", help=glosario_txt)
 
             if not df_aud_rect.empty:
                 busqueda_sku = st.text_input("🔍 Filtrar por Descripción o Código SKU:", "")

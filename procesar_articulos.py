@@ -3,7 +3,7 @@ import numpy as np
 import os
 import glob
 
-print("🚀 Procesando BDMVTAL (con Tienda Nativa) + Rectificaciones...")
+print("🚀 Procesando BDMVTAL y Rectificaciones (Estado R = Rechazada)...")
 
 ruta_carpeta = os.path.join(".", "Datos_mensales")
 
@@ -23,7 +23,6 @@ for f in archivos_desp:
 df_desp = pd.concat(lista_desp, ignore_index=True)
 df_desp.columns = df_desp.columns.str.strip()
 
-# Identificar columnas en BDMVTAL (Almacén, Tienda, Fecha de carga, Pedido, Importe)
 col_alm_d = [c for c in df_desp.columns if "almac" in c.lower()][0]
 col_tien_d = [c for c in df_desp.columns if "tiend" in c.lower()][0]
 
@@ -85,10 +84,14 @@ df_rect["Tienda"] = df_rect["Tienda_Original"].astype(str).str.strip().str.repla
 
 df_rect["Motivo_Clean"] = df_rect["Motivo"].astype(str).str.strip().str.upper()
 df_rect["Procedencia_Clean"] = df_rect["Procedencia"].astype(str).str.strip().str.upper()
+df_rect["Estado_Clean"] = df_rect["Estado"].astype(str).str.strip().str.upper()
 df_rect["Artículo"] = df_rect["Artículo"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
 df_rect["Unid_Grabadas"] = pd.to_numeric(df_rect["Unid/Kgs grabados"].astype(str).str.replace(",", "."), errors="coerce").fillna(0)
 df_rect["Unid_Abonadas"] = pd.to_numeric(df_rect["Unid/Kgs abonados"].astype(str).str.replace(",", "."), errors="coerce").fillna(0)
 df_rect["Monto_Rectif"] = pd.to_numeric(df_rect["Imp.tien.PVP S/IVA mon.BD"].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
+
+# FILTRADO EXCLUSIVO PARA SLA: Excluir ÚNICAMENTE Automáticas ('A')
+df_rect_sla = df_rect[df_rect["Estado_Clean"] != "A"].copy()
 
 # 3. CLASIFICACIÓN DE CASUÍSTICAS POR PEDIDO
 def clasificar_pedido(df_ped):
@@ -97,7 +100,7 @@ def clasificar_pedido(df_ped):
     procedencias = set(df_ped["Procedencia_Clean"].unique())
     
     tiene_f = "F" in motivos
-    tiene_s = "S" in motivos
+    tiene_s = "S" in motives if 'motives' in locals() else "S" in motivos
     
     if "T" in procedencias and cant_lineas > 10 and tiene_f and tiene_s:
         return "Etiquetas Cambiadas", -10.0, 0.0
@@ -114,12 +117,12 @@ def clasificar_pedido(df_ped):
         return "Faltante Neto", -6.0, 4.0
         
     if tiene_s and not tiene_f:
-        return "Sobrante Neto", -1.0, 9.0
+        return "Sobrante Neto", 0.0, 10.0
         
     return "Faltante Neto", -6.0, 4.0
 
 resumen_pedidos_rect = []
-for ped, group in df_rect.groupby("Pedido"):
+for ped, group in df_rect_sla.groupby("Pedido"):
     casuistica, penalizacion, puntos = clasificar_pedido(group)
     cant_lineas = len(group)
     monto_total = group["Monto_Rectif"].sum()
@@ -139,10 +142,10 @@ for ped, group in df_rect.groupby("Pedido"):
 
 df_pedidos_rect_summary = pd.DataFrame(resumen_pedidos_rect)
 
-# 4. CRUCE DESPACHOS BDMVTAL + CASUÍSTICAS RECTIFICACIONES
+# 4. CRUCE DESPACHOS BDMVTAL + CASUÍSTICAS OPERATIVAS
 df_sla_pedidos = df_desp_unicos.merge(df_pedidos_rect_summary, on="Pedido", how="left")
 
-# Pedidos de BDMVTAL sin rectificación = Pedido Perfecto
+# Pedidos de BDMVTAL sin rectificación operativa = Pedido Perfecto
 df_sla_pedidos["Casuistica"] = df_sla_pedidos["Casuistica"].fillna("Pedido Perfecto")
 df_sla_pedidos["Penalizacion"] = df_sla_pedidos["Penalizacion"].fillna(0.0)
 df_sla_pedidos["Puntos_Obtenidos"] = df_sla_pedidos["Puntos_Obtenidos"].fillna(10.0)
@@ -156,9 +159,5 @@ df_sla_pedidos.to_parquet("Tablero_SLA_Pedidos.parquet", index=False, compressio
 df_rect.to_parquet("Tablero_Rectificaciones_Detalle.parquet", index=False, compression="snappy")
 
 print("="*60)
-print(f"✅ ¡Parquet generado con éxito!")
-print(f"📌 Total Pedidos Únicos en BDMVTAL : {len(df_sla_pedidos):,}")
-print(f"📌 Tiendas Únicas en BDMVTAL       : {df_sla_pedidos['Tienda'].nunique():,}")
-print(f"📌 Pedidos con Rectificación       : {len(df_pedidos_rect_summary):,}")
-print(f"📌 Pedidos Perfectos (10/10)       : {len(df_sla_pedidos[df_sla_pedidos['Casuistica'] == 'Pedido Perfecto']):,}")
+print(f"✅ ¡Parquet generado con Estado R = Rechazada!")
 print("="*60)
