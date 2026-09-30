@@ -40,6 +40,16 @@ try:
             almacen_sel = st.sidebar.multiselect("Almacén:", almacenes, default=almacenes)
             df_sla = df_sla[df_sla["Almacen"].astype(str).isin(almacen_sel)]
 
+        if "Gestion" in df_sla.columns and df_sla["Gestion"].notna().any():
+            gestiones = sorted([str(x) for x in df_sla["Gestion"].dropna().unique()])
+            gestion_sel = st.sidebar.multiselect("Gestión / Zona:", gestiones, default=gestiones)
+            df_sla = df_sla[df_sla["Gestion"].astype(str).isin(gestion_sel)]
+
+        if "Responsable_Tienda" in df_sla.columns and df_sla["Responsable_Tienda"].notna().any():
+            responsables = sorted([str(x) for x in df_sla["Responsable_Tienda"].dropna().unique()])
+            resp_sel = st.sidebar.multiselect("Franquiciado / Supervisor:", responsables, default=responsables)
+            df_sla = df_sla[df_sla["Responsable_Tienda"].astype(str).isin(resp_sel)]
+
         if "Tienda" in df_sla.columns:
             tiendas = sorted([str(x) for x in df_sla["Tienda"].dropna().unique() if str(x) != "nan"])
             tienda_sel = st.sidebar.multiselect("Tienda:", tiendas, default=tiendas)
@@ -158,28 +168,38 @@ try:
             )
             st.plotly_chart(fig_mes_alm, use_container_width=True)
 
+            # -------------------------------------------------------------
+            # CUADRO 1: DETALLE POR FRANQUICIADO / SUPERVISOR (INCLUYE TOTAL TIENDAS)
+            # -------------------------------------------------------------
             st.markdown("---")
-            st.markdown("### 🏪 Detalle por Almacén y Tienda")
+            st.markdown("### 🏪 Detalle por Franquiciado / Supervisor")
 
-            tb_sla = df_sla.groupby(["Almacen", "Tienda"], as_index=False).agg(
+            group_cols_resp = []
+            if "Responsable_Tienda" in df_sla.columns:
+                group_cols_resp.append("Responsable_Tienda")
+            else:
+                group_cols_resp = ["Tienda"]
+
+            tb_resp = df_sla.groupby(group_cols_resp, as_index=False).agg(
+                Total_Tiendas=("Tienda", "nunique"),
                 Pedidos_Totales=("Pedido", "count"),
                 Pedidos_Con_Rectificaciones=("Casuistica", lambda x: (x != "Pedido Perfecto").sum()),
                 Puntos_Obtenidos=("Puntos_Obtenidos", "sum")
             )
 
-            tb_sla["Puntos_Posibles"] = tb_sla["Pedidos_Totales"] * 10.0
-            tb_sla["Puntaje SLA"] = (tb_sla["Puntos_Obtenidos"] / tb_sla["Puntos_Posibles"]) * 10.0
-            tb_sla["Puntaje SLA"] = tb_sla["Puntaje SLA"].fillna(0.0)
-            
-            tb_sla["Tasa_Aprobacion"] = ((tb_sla["Pedidos_Totales"] - tb_sla["Pedidos_Con_Rectificaciones"]) / tb_sla["Pedidos_Totales"]) * 100.0
+            tb_resp["Puntos_Posibles"] = tb_resp["Pedidos_Totales"] * 10.0
+            tb_resp["Puntaje SLA"] = (tb_resp["Puntos_Obtenidos"] / tb_resp["Puntos_Posibles"]) * 10.0
+            tb_resp["Puntaje SLA"] = tb_resp["Puntaje SLA"].fillna(0.0)
+            tb_resp["Tasa_Aprobacion"] = ((tb_resp["Pedidos_Totales"] - tb_resp["Pedidos_Con_Rectificaciones"]) / tb_resp["Pedidos_Totales"]) * 100.0
 
-            tb_sla_sorted = tb_sla.sort_values(by="Puntaje SLA", ascending=True).reset_index(drop=True)
+            tb_resp_sorted = tb_resp.sort_values(by="Puntaje SLA", ascending=True).reset_index(drop=True)
 
             tasa_aprob_global = ((tot_pedidos_global - tot_pedidos_rectif_global) / tot_pedidos_global * 100.0) if tot_pedidos_global > 0 else 0.0
+            tot_tiendas_global = df_sla["Tienda"].nunique() if "Tienda" in df_sla.columns else 0
 
-            fila_total = pd.DataFrame([{
-                "Almacen": "Total General",
-                "Tienda": "—",
+            fila_total_resp = pd.DataFrame([{
+                "Responsable_Tienda": "Total General",
+                "Total_Tiendas": tot_tiendas_global,
                 "Pedidos_Totales": tot_pedidos_global,
                 "Pedidos_Con_Rectificaciones": tot_pedidos_rectif_global,
                 "Tasa_Aprobacion": tasa_aprob_global,
@@ -188,8 +208,9 @@ try:
                 "Puntaje SLA": sla_global
             }])
 
-            tb_sla_display = pd.concat([tb_sla_sorted, fila_total], ignore_index=True)
+            tb_resp_display = pd.concat([tb_resp_sorted, fila_total_resp], ignore_index=True)
 
+            col_tiendas_lbl = "Total\nTiendas"
             col_totales_lbl = "Pedidos\nTotales"
             col_rectif_lbl = "Pedidos con\nRectificaciones"
             col_tasa_lbl = "% Tasa\nAprobación"
@@ -197,9 +218,9 @@ try:
             col_pts_posibles_lbl = "Puntos\nPosibles"
             col_sla_lbl = "Puntaje SLA\n(1 a 10)"
 
-            tb_sla_display = tb_sla_display.rename(columns={
-                "Almacen": "Almacén",
-                "Tienda": "Tienda",
+            tb_resp_display = tb_resp_display.rename(columns={
+                "Responsable_Tienda": "Franquiciado / Supervisor",
+                "Total_Tiendas": col_tiendas_lbl,
                 "Pedidos_Totales": col_totales_lbl,
                 "Pedidos_Con_Rectificaciones": col_rectif_lbl,
                 "Tasa_Aprobacion": col_tasa_lbl,
@@ -208,16 +229,18 @@ try:
                 "Puntaje SLA": col_sla_lbl
             })
 
+            cols_order_resp = [
+                "Franquiciado / Supervisor", col_tiendas_lbl,
+                col_totales_lbl, col_rectif_lbl, col_tasa_lbl, 
+                col_pts_obtenidos_lbl, col_pts_posibles_lbl, col_sla_lbl
+            ]
+
             st.dataframe(
-                tb_sla_display[[
-                    "Almacén", "Tienda", col_totales_lbl, 
-                    col_rectif_lbl, col_tasa_lbl, col_pts_obtenidos_lbl, 
-                    col_pts_posibles_lbl, col_sla_lbl
-                ]],
+                tb_resp_display[cols_order_resp],
                 hide_index=True,
                 column_config={
-                    "Almacén": st.column_config.Column("Almacén", width="small"),
-                    "Tienda": st.column_config.Column("Tienda", width="small"),
+                    "Franquiciado / Supervisor": st.column_config.Column("Franquiciado / Supervisor", width="large"),
+                    col_tiendas_lbl: st.column_config.NumberColumn(col_tiendas_lbl, format="%d", width="small"),
                     col_totales_lbl: st.column_config.NumberColumn(col_totales_lbl, format="%d", width="small"),
                     col_rectif_lbl: st.column_config.NumberColumn(col_rectif_lbl, format="%d", width="small"),
                     col_tasa_lbl: st.column_config.NumberColumn(col_tasa_lbl, format="%.2f %%", width="small"),
@@ -227,7 +250,88 @@ try:
                 }
             )
 
-            # CUADRO OPERATIVO DE ERRORES SEGÚN CASUÍSTICA Y ORIGEN %
+            # -------------------------------------------------------------
+            # CUADRO 2: DETALLE POR ALMACÉN, TIENDA Y GESTIÓN
+            # -------------------------------------------------------------
+            st.markdown("---")
+            st.markdown("### 🏬 Detalle por Almacén, Tienda y Gestión")
+
+            group_cols_alm = ["Almacen", "Tienda"]
+            if "Gestion" in df_sla.columns:
+                group_cols_alm.append("Gestion")
+
+            tb_alm_tienda = df_sla.groupby(group_cols_alm, as_index=False).agg(
+                Pedidos_Totales=("Pedido", "count"),
+                Pedidos_Con_Rectificaciones=("Casuistica", lambda x: (x != "Pedido Perfecto").sum()),
+                Puntos_Obtenidos=("Puntos_Obtenidos", "sum")
+            )
+
+            tb_alm_tienda["Puntos_Posibles"] = tb_alm_tienda["Pedidos_Totales"] * 10.0
+            tb_alm_tienda["Puntaje SLA"] = (tb_alm_tienda["Puntos_Obtenidos"] / tb_alm_tienda["Puntos_Posibles"]) * 10.0
+            tb_alm_tienda["Puntaje SLA"] = tb_alm_tienda["Puntaje SLA"].fillna(0.0)
+            tb_alm_tienda["Tasa_Aprobacion"] = ((tb_alm_tienda["Pedidos_Totales"] - tb_alm_tienda["Pedidos_Con_Rectificaciones"]) / tb_alm_tienda["Pedidos_Totales"]) * 100.0
+
+            tb_alm_tienda_sorted = tb_alm_tienda.sort_values(by="Puntaje SLA", ascending=True).reset_index(drop=True)
+
+            fila_dict_alm = {
+                "Almacen": "Total General",
+                "Tienda": "—",
+                "Pedidos_Totales": tot_pedidos_global,
+                "Pedidos_Con_Rectificaciones": tot_pedidos_rectif_global,
+                "Tasa_Aprobacion": tasa_aprob_global,
+                "Puntos_Obtenidos": tot_pts_obtenidos_global,
+                "Puntos_Posibles": tot_pts_posibles_global,
+                "Puntaje SLA": sla_global
+            }
+            if "Gestion" in group_cols_alm:
+                fila_dict_alm["Gestion"] = "—"
+
+            fila_total_alm = pd.DataFrame([fila_dict_alm])
+
+            tb_alm_tienda_display = pd.concat([tb_alm_tienda_sorted, fila_total_alm], ignore_index=True)
+
+            rename_dict_alm = {
+                "Almacen": "Almacén",
+                "Tienda": "Tienda",
+                "Gestion": "Gestión",
+                "Pedidos_Totales": col_totales_lbl,
+                "Pedidos_Con_Rectificaciones": col_rectif_lbl,
+                "Tasa_Aprobacion": col_tasa_lbl,
+                "Puntos_Obtenidos": col_pts_obtenidos_lbl,
+                "Puntos_Posibles": col_pts_posibles_lbl,
+                "Puntaje SLA": col_sla_lbl
+            }
+
+            tb_alm_tienda_display = tb_alm_tienda_display.rename(columns=rename_dict_alm)
+
+            cols_order_alm = ["Almacén", "Tienda"]
+            if "Gestión" in tb_alm_tienda_display.columns:
+                cols_order_alm.append("Gestión")
+
+            cols_order_alm.extend([
+                col_totales_lbl, col_rectif_lbl, col_tasa_lbl, 
+                col_pts_obtenidos_lbl, col_pts_posibles_lbl, col_sla_lbl
+            ])
+
+            st.dataframe(
+                tb_alm_tienda_display[cols_order_alm],
+                hide_index=True,
+                column_config={
+                    "Almacén": st.column_config.Column("Almacén", width="small"),
+                    "Tienda": st.column_config.Column("Tienda", width="small"),
+                    "Gestión": st.column_config.Column("Gestión", width="medium"),
+                    col_totales_lbl: st.column_config.NumberColumn(col_totales_lbl, format="%d", width="small"),
+                    col_rectif_lbl: st.column_config.NumberColumn(col_rectif_lbl, format="%d", width="small"),
+                    col_tasa_lbl: st.column_config.NumberColumn(col_tasa_lbl, format="%.2f %%", width="small"),
+                    col_pts_obtenidos_lbl: st.column_config.NumberColumn(col_pts_obtenidos_lbl, format="%.1f Pts", width="small"),
+                    col_pts_posibles_lbl: st.column_config.NumberColumn(col_pts_posibles_lbl, format="%.1f Pts", width="small"),
+                    col_sla_lbl: st.column_config.NumberColumn(col_sla_lbl, format="%.2f ⭐", width="small")
+                }
+            )
+
+            # -------------------------------------------------------------
+            # CUADRO 3: DESGLOSE DE ERRORES POR CASUÍSTICA Y ORIGEN
+            # -------------------------------------------------------------
             st.markdown("---")
             st.markdown("### 📊 Desglose de Errores por Casuística y Origen (Tienda vs. Almacén)")
             
