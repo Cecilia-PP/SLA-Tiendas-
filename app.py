@@ -6,14 +6,20 @@ import os
 st.set_page_config(page_title="Tablero Satisfacción - SLA Tiendas", layout="wide")
 st.markdown('<meta name="google" content="notranslate">', unsafe_allow_html=True)
 
-# CSS para centrar y permitir saltos de línea limpios en encabezados
+# CSS MEJORADO: Permite salto de línea en los encabezados y ajusta padding para evitar recortes
 st.markdown("""
 <style>
     div[data-testid="stTable"] th, div[data-testid="stDataFrame"] th {
-        white-space: pre-wrap !important;
+        white-space: normal !important;
         word-wrap: break-word !important;
         text-align: center !important;
         vertical-align: middle !important;
+        padding: 8px 4px !important;
+    }
+    div[data-testid="stDataFrame"] div[role="columnheader"] p {
+        font-size: 0.88rem !important;
+        font-weight: 600 !important;
+        line-height: 1.2 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -169,7 +175,7 @@ try:
             st.plotly_chart(fig_mes_alm, use_container_width=True)
 
             # -------------------------------------------------------------
-            # CUADRO 1: DETALLE POR FRANQUICIADO / SUPERVISOR (INCLUYE TOTAL TIENDAS)
+            # CUADRO 1: DETALLE POR FRANQUICIADO / SUPERVISOR
             # -------------------------------------------------------------
             st.markdown("---")
             st.markdown("### 🏪 Detalle por Franquiciado / Supervisor")
@@ -238,15 +244,16 @@ try:
             st.dataframe(
                 tb_resp_display[cols_order_resp],
                 hide_index=True,
+                use_container_width=True,
                 column_config={
                     "Franquiciado / Supervisor": st.column_config.Column("Franquiciado / Supervisor", width="large"),
                     col_tiendas_lbl: st.column_config.NumberColumn(col_tiendas_lbl, format="%d", width="small"),
                     col_totales_lbl: st.column_config.NumberColumn(col_totales_lbl, format="%d", width="small"),
-                    col_rectif_lbl: st.column_config.NumberColumn(col_rectif_lbl, format="%d", width="small"),
-                    col_tasa_lbl: st.column_config.NumberColumn(col_tasa_lbl, format="%.2f %%", width="small"),
-                    col_pts_obtenidos_lbl: st.column_config.NumberColumn(col_pts_obtenidos_lbl, format="%.1f Pts", width="small"),
-                    col_pts_posibles_lbl: st.column_config.NumberColumn(col_pts_posibles_lbl, format="%.1f Pts", width="small"),
-                    col_sla_lbl: st.column_config.NumberColumn(col_sla_lbl, format="%.2f ⭐", width="small")
+                    col_rectif_lbl: st.column_config.NumberColumn(col_rectif_lbl, format="%d", width="medium"),
+                    col_tasa_lbl: st.column_config.NumberColumn(col_tasa_lbl, format="%.2f %%", width="medium"),
+                    col_pts_obtenidos_lbl: st.column_config.NumberColumn(col_pts_obtenidos_lbl, format="%.1f Pts", width="medium"),
+                    col_pts_posibles_lbl: st.column_config.NumberColumn(col_pts_posibles_lbl, format="%.1f Pts", width="medium"),
+                    col_sla_lbl: st.column_config.NumberColumn(col_sla_lbl, format="%.2f ⭐", width="medium")
                 }
             )
 
@@ -316,16 +323,17 @@ try:
             st.dataframe(
                 tb_alm_tienda_display[cols_order_alm],
                 hide_index=True,
+                use_container_width=True,
                 column_config={
                     "Almacén": st.column_config.Column("Almacén", width="small"),
                     "Tienda": st.column_config.Column("Tienda", width="small"),
-                    "Gestión": st.column_config.Column("Gestión", width="medium"),
+                    "Gestión": st.column_config.Column("Gestión", width="small"),
                     col_totales_lbl: st.column_config.NumberColumn(col_totales_lbl, format="%d", width="small"),
-                    col_rectif_lbl: st.column_config.NumberColumn(col_rectif_lbl, format="%d", width="small"),
-                    col_tasa_lbl: st.column_config.NumberColumn(col_tasa_lbl, format="%.2f %%", width="small"),
-                    col_pts_obtenidos_lbl: st.column_config.NumberColumn(col_pts_obtenidos_lbl, format="%.1f Pts", width="small"),
-                    col_pts_posibles_lbl: st.column_config.NumberColumn(col_pts_posibles_lbl, format="%.1f Pts", width="small"),
-                    col_sla_lbl: st.column_config.NumberColumn(col_sla_lbl, format="%.2f ⭐", width="small")
+                    col_rectif_lbl: st.column_config.NumberColumn(col_rectif_lbl, format="%d", width="medium"),
+                    col_tasa_lbl: st.column_config.NumberColumn(col_tasa_lbl, format="%.2f %%", width="medium"),
+                    col_pts_obtenidos_lbl: st.column_config.NumberColumn(col_pts_obtenidos_lbl, format="%.1f Pts", width="medium"),
+                    col_pts_posibles_lbl: st.column_config.NumberColumn(col_pts_posibles_lbl, format="%.1f Pts", width="medium"),
+                    col_sla_lbl: st.column_config.NumberColumn(col_sla_lbl, format="%.2f ⭐", width="medium")
                 }
             )
 
@@ -378,12 +386,13 @@ try:
                         "% Origen Tienda (T)", "% Origen Almacén (G)"
                     ]],
                     hide_index=True,
+                    use_container_width=True,
                     column_config={
                         "Casuistica": st.column_config.Column("Casuística / Tipo de Error", width="medium"),
                         "Cantidad_Pedidos": st.column_config.NumberColumn("Cantidad Pedidos", format="%d", width="small"),
-                        "% Part. sobre Errores": st.column_config.NumberColumn("% Part. sobre Errores", format="%.2f %%", width="small"),
-                        "% Origen Tienda (T)": st.column_config.NumberColumn("% Origen Tienda (T)", format="%.1f %%", width="small"),
-                        "% Origen Almacén (G)": st.column_config.NumberColumn("% Origen Almacén (G)", format="%.1f %%", width="small")
+                        "% Part. sobre Errores": st.column_config.NumberColumn("% Part. sobre Errores", format="%.2f %%", width="medium"),
+                        "% Origen Tienda (T)": st.column_config.NumberColumn("% Origen Tienda (T)", format="%.1f %%", width="medium"),
+                        "% Origen Almacén (G)": st.column_config.NumberColumn("% Origen Almacén (G)", format="%.1f %%", width="medium")
                     }
                 )
             else:
@@ -409,6 +418,7 @@ try:
             st.dataframe(
                 cas_sum,
                 hide_index=True,
+                use_container_width=True,
                 column_config={
                     "Casuistica": st.column_config.Column("Casuística Operativa"),
                     "Cantidad_Pedidos": st.column_config.NumberColumn("Cantidad de Pedidos", format="%d"),
@@ -428,7 +438,7 @@ try:
                 {"Casuística Operativa": "Faltante Neto", "Descuento Aplicado": "-6.0 Pts", "Puntaje por Pedido": "4.0 / 10", "Justificación Cualitativa y Operacional": "Despacho incompleto. Quiebre de stock en góndola."},
                 {"Casuística Operativa": "Etiquetas Cambiadas", "Descuento Aplicado": "-10.0 Pts", "Puntaje por Pedido": "0.0 / 10", "Justificación Cualitativa y Operacional": "Error masivo logístico (>10 líneas cruzadas). Requerimiento de auditoría total."}
             ])
-            st.dataframe(matriz_p, hide_index=True)
+            st.dataframe(matriz_p, hide_index=True, use_container_width=True)
 
         # -------------------------------------------------------------
         # HOJA 3: AUDITORÍA INDIVIDUAL
@@ -506,6 +516,7 @@ Las líneas con Estado 'A' se muestran en la tabla inferior para trazabilidad, p
                 st.dataframe(
                     df_aud_rect_disp,
                     hide_index=True,
+                    use_container_width=True,
                     column_config={
                         "Pedido": st.column_config.Column("Pedido", width="small"),
                         "N° Rectif.": st.column_config.Column("N° Rectif.", width="small"),
