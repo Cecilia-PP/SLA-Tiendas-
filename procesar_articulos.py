@@ -2,8 +2,9 @@
 import glob
 import os
 
-print("🔄 Eliminando 'Formato no Entregado' y unificando en 8 casuísticas principales...")
+print("🔄 Corrigiendo 'procesar_articulos.py': Restaurando regla estricta F == S para Sustituciones...")
 
+# 1. Cargar Maestro
 path_maestro_csv = glob.glob("Datos_mensuales/*[Mm]aestro*.csv") + glob.glob("*[Mm]aestro*.csv")
 df_maestro = pd.DataFrame()
 
@@ -67,6 +68,17 @@ if list_rect:
     df_rect_all["Subfamilia"] = df_rect_all.get("Subfamilia", pd.Series()).fillna("Sin Subfamilia")
     df_rect_all["Es_Master"] = df_rect_all.get("Es_Master", pd.Series()).fillna("No")
 
+    col_unid = None
+    for c in ["Unid/Kgs grabados", "Unid_Grabadas", "Unidades Grabadas", "Unid/Kgs abonados"]:
+        if c in df_rect_all.columns:
+            col_unid = c
+            break
+
+    if col_unid:
+        df_rect_all["Unidades_Num"] = pd.to_numeric(df_rect_all[col_unid].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
+    else:
+        df_rect_all["Unidades_Num"] = 1.0
+
     col_monto = [c for c in ["Monto_Rectif", "Imp.tien.PVP S/IVA mon.BD", "Monto", "Importe"] if c in df_rect_all.columns]
     if col_monto:
         df_rect_all["Monto_Rectif"] = pd.to_numeric(df_rect_all[col_monto[0]].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
@@ -80,48 +92,67 @@ if list_rect:
     col_motivo = "Motivo_Clean" if "Motivo_Clean" in df_rect_all.columns else "Motivo"
     df_rect_all["Motivo_Norm"] = df_rect_all[col_motivo].astype(str).str.strip().str.upper()
 
-    resumen_ped = df_rect_all.groupby("Pedido").agg(
-        Total_Lineas=("Motivo_Norm", "count"),
-        Cant_F=("Motivo_Norm", lambda x: (x == "F").sum()),
-        Cant_S=("Motivo_Norm", lambda x: (x == "S").sum()),
-        Subfams=("Subfamilia", lambda x: len(x.dropna().unique())),
-        Tiene_Master_F=("Es_Master", lambda x: ((x == "Sí") & (df_rect_all.loc[x.index, "Motivo_Norm"] == "F")).any())
-    ).reset_index()
+    pedidos_clasif = []
 
-    def clasificar_pedido(row):
-        tot = row["Total_Lineas"]
-        f = row["Cant_F"]
-        s = row["Cant_S"]
-        has_master_f = row["Tiene_Master_F"]
+    for ped, group in df_rect_all.groupby("Pedido"):
+        tot_lineas = len(group)
+        f_group = group[group["Motivo_Norm"] == "F"]
+        s_group = group[group["Motivo_Norm"] == "S"]
         
-        if f > 0 and s > 0:
-            if tot >= 12:
-                return "Etiquetas Cambiadas", 0.0
-            elif f == s:
-                if row["Subfams"] <= 1:
-                    return "Sustitución Misma Subfamilia", 7.5
-                else:
-                    return "Sustitución Distinta Subfamilia", 5.5
-            else:
-                return "Falta/Sobra", 4.5
-        elif f > 0:
-            if has_master_f:
-                return "Faltante UxB", 4.0
-            else:
-                return "Faltante Neto", 4.0
-        elif s > 0:
-            return "Sobrante Neto", 10.0
-        return "Pedido Perfecto", 10.0
+        cant_f = len(f_group)
+        cant_s = len(s_group)
+        
+        has_master_f = (f_group["Es_Master"] == "Sí").any()
+        
+        if cant_f > 0 and cant_s > 0:
+            if tot_lineas >= 12:
+                cas, pts = "Etiquetas Cambiadas", 0.0
+            # REGLA STRICTA DE EQUIDAD: F == S
+            elif cant_f == cant_s:
+                subfams_f = set(f_group["Subfamilia"].dropna().unique())
+                subfams_s = set(s_group["Subfamilia"].dropna().unique())
+                fams_f = set(f_group["Familia"].dropna().unique())
+                fams_s = set(s_group["Familia"].dropna().unique())
+                
+                coincide_subfam = len(subfams_f.intersection(subfams_s)) > 0
+                coincide_fam = len(fams_f.intersection(fams_s)) > 0
+                
+                # Coincidencia por la línea de mayor volumen
+                unid_coincidencia_principal = False
+                if not f_group.empty and not s_group.empty:
+                    max_f_fam = f_group.sort_values(by="Unidades_Num", ascending=False).iloc[0]["Familia"]
+                    max_s_fam = s_group.sort_values(by="Unidades_Num", ascending=False).iloc[0]["Familia"]
+                    if max_f_fam == max_s_fam and max_f_fam != "Sin Familia":
+                        unid_coincidencia_principal = True
 
-    resumen_ped[["Casuistica", "Puntos_Obtenidos"]] = resumen_ped.apply(clasificar_pedido, axis=1, result_type="expand")
+                if coincide_subfam or coincide_fam or unid_coincidencia_principal:
+                    cas, pts = "Sustitución Misma Subfamilia", 7.5
+                else:
+                    cas, pts = "Sustitución Distinta Subfamilia", 5.5
+            else:
+                # F != S -> Falta/Sobra
+                cas, pts = "Falta/Sobra", 4.5
+        elif cant_f > 0:
+            if has_master_f:
+                cas, pts = "Faltante UxB", 4.0
+            else:
+                cas, pts = "Faltante Neto", 4.0
+        elif cant_s > 0:
+            cas, pts = "Sobrante Neto", 10.0
+        else:
+            cas, pts = "Pedido Perfecto", 10.0
+            
+        pedidos_clasif.append({"Pedido": ped, "Casuistica": cas, "Puntos_Obtenidos": pts})
+
+    resumen_ped = pd.DataFrame(pedidos_clasif)
 
     if os.path.exists("Tablero_SLA_Pedidos.parquet"):
         df_sla = pd.read_parquet("Tablero_SLA_Pedidos.parquet")
         df_sla = df_sla.drop(columns=["Casuistica", "Puntos_Obtenidos"], errors="ignore")
-        df_sla = df_sla.merge(resumen_ped[["Pedido", "Casuistica", "Puntos_Obtenidos"]], on="Pedido", how="left")
+        df_sla = df_sla.merge(resumen_ped, on="Pedido", how="left")
         df_sla["Casuistica"] = df_sla["Casuistica"].fillna("Pedido Perfecto")
         df_sla["Puntos_Obtenidos"] = df_sla["Puntos_Obtenidos"].fillna(10.0)
         df_sla.to_parquet("Tablero_SLA_Pedidos.parquet", index=False)
-        print("✅ Tablero_SLA_Pedidos.parquet actualizado sin 'Formato no Entregado'.")
+        print("✅ Tablero_SLA_Pedidos.parquet corregido con la regla estricta F == S para Sustitución.")
 
-print("🚀 Procesamiento completado.")
+print("🚀 Procesamiento finalizado con éxito.")
