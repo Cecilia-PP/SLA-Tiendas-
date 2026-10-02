@@ -199,8 +199,8 @@ try:
             )
             st.plotly_chart(fig_mes_alm, use_container_width=True)
 
-            # 2. GRÁFICO COMBINADO: CASUÍSTICAS APILADAS + LÍNEA MONTO NETO PENDIENTE
-            st.markdown("### 📊 Evolución Mensual de Casuísticas y Monto Neto Pendiente")
+            # 2. GRÁFICO COMBINADO: CASUÍSTICAS APILADAS + LÍNEA DE CANTIDAD DE LÍNEAS RECTIFICADAS
+            st.markdown("### 📊 Evolución Mensual de Casuísticas y Cantidad de Líneas Rectificadas")
 
             df_sla_cas_errores = df_sla_mes[df_sla_mes["Casuistica"] != "Pedido Perfecto"].copy()
 
@@ -209,28 +209,22 @@ try:
             ).sort_values(by=["Mes_Num"]).reset_index(drop=True)
 
             if not df_rect.empty:
-                col_estado = "Estado_Clean" if "Estado_Clean" in df_rect.columns else "Estado"
-                df_rect_p = df_rect[df_rect[col_estado].astype(str).str.strip().str.upper() == "P"].copy()
-                
-                if "Fecha de Grabación" in df_rect_p.columns:
-                    df_rect_p["Fecha_DT"] = pd.to_datetime(df_rect_p["Fecha de Grabación"].astype(str), format="%Y%m%d", errors="coerce")
-                    df_rect_p["Mes_Num"] = df_rect_p["Fecha_DT"].dt.month.fillna(0).astype(int)
-                elif "Mes" in df_rect_p.columns:
-                    df_rect_p["Mes_Num"] = pd.to_numeric(df_rect_p["Mes"], errors="coerce").fillna(0).astype(int)
+                df_rect_m = df_rect.copy()
+                if "Fecha de Grabación" in df_rect_m.columns:
+                    df_rect_m["Fecha_DT"] = pd.to_datetime(df_rect_m["Fecha de Grabación"].astype(str), format="%Y%m%d", errors="coerce")
+                    df_rect_m["Mes_Num"] = df_rect_m["Fecha_DT"].dt.month.fillna(0).astype(int)
+                elif "Mes" in df_rect_m.columns:
+                    df_rect_m["Mes_Num"] = pd.to_numeric(df_rect_m["Mes"], errors="coerce").fillna(0).astype(int)
                 else:
-                    df_rect_p["Mes_Num"] = 0
+                    df_rect_m["Mes_Num"] = 0
 
-                col_motivo = "Motivo_Clean" if "Motivo_Clean" in df_rect_p.columns else "Motivo"
-                df_rect_p["Factor_Signo"] = df_rect_p[col_motivo].astype(str).str.strip().str.upper().apply(lambda x: -1.0 if x == "S" else 1.0)
-                df_rect_p["Monto_Signado"] = df_rect_p["Monto_Rectif"] * df_rect_p["Factor_Signo"]
-
-                df_monto_mes = df_rect_p.groupby("Mes_Num", as_index=False)["Monto_Signado"].sum()
-                df_monto_mes = df_monto_mes.rename(columns={"Monto_Signado": "Monto_Neto_Pendiente"})
+                df_lineas_mes = df_rect_m.groupby("Mes_Num", as_index=False).size()
+                df_lineas_mes = df_lineas_mes.rename(columns={"size": "Cant_Lineas_Rectificadas"})
             else:
-                df_monto_mes = pd.DataFrame(columns=["Mes_Num", "Monto_Neto_Pendiente"])
+                df_lineas_mes = pd.DataFrame(columns=["Mes_Num", "Cant_Lineas_Rectificadas"])
 
             df_meses_unicos = df_sla_mes[["Mes_Num", "Nombre_Mes"]].drop_duplicates().sort_values("Mes_Num").reset_index(drop=True)
-            df_monto_mes = df_meses_unicos.merge(df_monto_mes, on="Mes_Num", how="left").fillna({"Monto_Neto_Pendiente": 0.0})
+            df_lineas_mes = df_meses_unicos.merge(df_lineas_mes, on="Mes_Num", how="left").fillna({"Cant_Lineas_Rectificadas": 0})
 
             colores_cas = {
                 "Sobrante Neto": "#4EA8DE",                  # Azul Claro
@@ -260,13 +254,13 @@ try:
 
             fig_comb.add_trace(
                 go.Scatter(
-                    x=df_monto_mes["Nombre_Mes"],
-                    y=df_monto_mes["Monto_Neto_Pendiente"],
-                    name="Monto Neto Pendiente ($)",
+                    x=df_lineas_mes["Nombre_Mes"],
+                    y=df_lineas_mes["Cant_Lineas_Rectificadas"],
+                    name="Líneas Rectificadas",
                     mode="lines+markers+text",
                     line=dict(color="#5A7D9A", width=3.5, dash="solid"),
                     marker=dict(size=9, symbol="circle", color="#34495E"),
-                    text=[f"" for x in df_monto_mes["Monto_Neto_Pendiente"]],
+                    text=[f"{int(x):,}" for x in df_lineas_mes["Cant_Lineas_Rectificadas"]],
                     textposition="top center"
                 ),
                 secondary_y=True
@@ -281,19 +275,18 @@ try:
                 xaxis=dict(title="Mes")
             )
             fig_comb.update_yaxes(title_text="Cantidad de Pedidos con Rectificación", secondary_y=False)
-            fig_comb.update_yaxes(title_text="Monto Neto Pendiente ($) [Falta + / Sobra -]", secondary_y=True, showgrid=False)
+            fig_comb.update_yaxes(title_text="Cantidad de Líneas Rectificadas", secondary_y=True, showgrid=False)
 
             st.plotly_chart(fig_comb, use_container_width=True)
 
             # -------------------------------------------------------------
-            # CUADRO 1: FRANQUICIADO / SUPERVISOR (% LÍNEAS CONFIRMADAS 'M' / TOTAL GRABADAS)
+            # CUADRO 1: FRANQUICIADO / SUPERVISOR
             # -------------------------------------------------------------
             st.markdown("---")
             st.markdown("### 🏪 Detalle por Franquiciado / Supervisor")
 
             group_cols_resp = ["Responsable_Tienda"] if "Responsable_Tienda" in df_sla.columns else ["Tienda"]
 
-            # 1. Agregado desde df_sla (Pedidos y Puntaje SLA)
             tb_resp_base = df_sla.groupby(group_cols_resp, as_index=False).agg(
                 Total_Tiendas=("Tienda", "nunique"),
                 Pedidos_Totales=("Pedido", "count"),
@@ -301,7 +294,6 @@ try:
                 Puntos_Obtenidos=("Puntos_Obtenidos", "sum")
             )
 
-            # 2. Conteo exacto de líneas grabadas vs. confirmadas ('M') desde el detalle de rectificaciones
             if not df_rect.empty and "Responsable_Tienda" in df_rect.columns:
                 col_est = "Estado_Clean" if "Estado_Clean" in df_rect.columns else "Estado"
                 tb_rect_counts = df_rect.groupby("Responsable_Tienda", as_index=False).agg(
@@ -321,7 +313,6 @@ try:
             tb_resp["Puntaje SLA"] = (tb_resp["Puntos_Obtenidos"] / tb_resp["Puntos_Posibles"]) * 10.0
             tb_resp["Puntaje SLA"] = tb_resp["Puntaje SLA"].fillna(0.0)
 
-            # CALCULO SOLICITADO: (Líneas Confirmadas 'M' / Total Líneas Grabadas) * 100
             tb_resp["% Líneas Confirmadas"] = (tb_resp["Lineas_Confirmadas_M"] / tb_resp["Lineas_Grabadas_Totales"] * 100.0)
             tb_resp["% Líneas Confirmadas"] = tb_resp["% Líneas Confirmadas"].fillna(0.0)
 
@@ -539,13 +530,15 @@ try:
 
             st.markdown("---")
             st.subheader("📋 Reglas de Puntaje y Evaluación SLA por Pedido")
+            
+            # MATRIZ ACTUALIZADA CON LAS DESCRIPCIONES EXACTAS SOLICITADAS
             matriz_p = pd.DataFrame([
-                {"Casuística Operativa": "Pedido Perfecto", "Descuento Aplicado": "0.0 Pts", "Puntaje por Pedido": "10.0 / 10", "Justificación Cualitativa y Operacional": "Envío sin rectificaciones. Servicio 100% conforme."},
-                {"Casuística Operativa": "Sobrante Neto", "Descuento Aplicado": "0.0 Pts", "Puntaje por Pedido": "10.0 / 10", "Justificación Cualitativa y Operacional": "Excedente físico entregado. No descuenta puntaje SLA."},
-                {"Casuística Operativa": "Sustitución Misma Subfamilia", "Descuento Aplicado": "-2.5 Pts", "Puntaje por Pedido": "7.5 / 10", "Justificación Cualitativa y Operacional": "Error de picking de productos equivalentes (ej. Yogur Entero por Light)."},
-                {"Casuística Operativa": "Sustitución Distinta Subfamilia", "Descuento Aplicado": "-4.5 Pts", "Puntaje por Pedido": "5.5 / 10", "Justificación Cualitativa y Operacional": "Error grave de picking entre categorías disímiles."},
-                {"Casuística Operativa": "Faltante Neto", "Descuento Aplicado": "-6.0 Pts", "Puntaje por Pedido": "4.0 / 10", "Justificación Cualitativa y Operacional": "Despacho incompleto. Quiebre de stock en góndola."},
-                {"Casuística Operativa": "Etiquetas Cambiadas", "Descuento Aplicado": "-10.0 Pts", "Puntaje por Pedido": "0.0 / 10", "Justificación Cualitativa y Operacional": "Error masivo logístico (>10 líneas cruzadas). Requerimiento de auditoría total."}
+                {"Casuística Operativa": "Pedido Perfecto", "Descuento Aplicado": "0.0 Pts", "Puntaje por Pedido": "10.0 / 10", "Simplificado": "Pedido sin rectificaciones"},
+                {"Casuística Operativa": "Sobrante Neto", "Descuento Aplicado": "0.0 Pts", "Puntaje por Pedido": "10.0 / 10", "Simplificado": "Pedido con rectificacion de sobra"},
+                {"Casuística Operativa": "Sustitución Misma Subfamilia", "Descuento Aplicado": "-2.5 Pts", "Puntaje por Pedido": "7.5 / 10", "Simplificado": "Pedido con rectificcion de falta y sobra en artículos de igual subfamilia."},
+                {"Casuística Operativa": "Sustitución Distinta Subfamilia", "Descuento Aplicado": "-4.5 Pts", "Puntaje por Pedido": "5.5 / 10", "Simplificado": "Pedido con rectificcion de falta y sobra en artículos de distintas subfamilias"},
+                {"Casuística Operativa": "Faltante Neto", "Descuento Aplicado": "-6.0 Pts", "Puntaje por Pedido": "4.0 / 10", "Simplificado": "Pedido con rectificacion de falta"},
+                {"Casuística Operativa": "Etiquetas Cambiadas", "Descuento Aplicado": "-10.0 Pts", "Puntaje por Pedido": "0.0 / 10", "Simplificado": "Pedido con formatos cambiados"}
             ])
             st.dataframe(matriz_p, hide_index=True)
 
@@ -570,7 +563,7 @@ try:
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("⭐ Puntaje SLA Tienda", f"{nota_sla_t:.2f} / 10.0")
             m2.metric("📦 Pedidos Totales Recibidos", f"{tot_p_t:,}")
-            m3.metric("⚠️️ Pedidos con Rectificaciones", f"{tot_p_rect_t:,}")
+            m3.metric("⚠️ Pedidos con Rectificaciones", f"{tot_p_rect_t:,}")
             m4.metric("🎯 Puntos Obtenidos / Posibles", f"{pts_obtenidos_t:,.1f} / {pts_posibles_t:,.1f}")
 
             st.markdown("---")
