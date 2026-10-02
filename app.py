@@ -63,6 +63,27 @@ try:
     if not df_sla.empty:
         st.sidebar.header("🔍 Filtros de Búsqueda")
 
+        # 🚨 FILTRO DE OUTLIERS POR POCOS PEDIDOS EN TIENDAS (CORREGIDO)
+        st.sidebar.markdown("---")
+        st.sidebar.header("⚠️ Filtro de Outliers (Pocos Pedidos)")
+        
+        pedidos_por_tienda = df_sla.groupby("Tienda")["Pedido"].nunique()
+        umbral_min_pedidos = st.sidebar.number_input(
+            "Mínimo de pedidos recibidos por tienda:",
+            min_value=1, max_value=100, value=5, step=1,
+            help="Excluye sucursales con muy pocos pedidos para evitar distorsiones estadísticas en el promedio SLA."
+        )
+        
+        tiendas_pocas_compras = set(pedidos_por_tienda[pedidos_por_tienda < umbral_min_pedidos].index)
+        activar_filtro_outliers = st.sidebar.checkbox("Excluir Tiendas con Pocos Pedidos", value=False)
+        
+        if activar_filtro_outliers and len(tiendas_pocas_compras) > 0:
+            df_sla = df_sla[~df_sla["Tienda"].isin(tiendas_pocas_compras)]
+            if not df_rect.empty:
+                df_rect = df_rect[~df_rect["Tienda"].isin(tiendas_pocas_compras)]
+            st.sidebar.warning(f"Excluidas {len(tiendas_pocas_compras):,} tiendas con < {umbral_min_pedidos} pedidos.")
+        st.sidebar.markdown("---")
+
         if "Almacen" in df_sla.columns:
             almacenes = sorted([str(x) for x in df_sla["Almacen"].dropna().unique()])
             almacen_sel = st.sidebar.multiselect("Almacén:", almacenes, default=almacenes)
@@ -459,22 +480,51 @@ try:
                         else:
                             df_aud_rect["Motivo_Norm"] = "F"
 
+                        col_unid = None
+                        for c in ["Unid/Kgs grabados", "Unid_Grabadas", "Unidades Grabadas", "Unid/Kgs abonados"]:
+                            if c in df_aud_rect.columns:
+                                col_unid = c
+                                break
+                        if col_unid:
+                            df_aud_rect["Unidades_Num"] = pd.to_numeric(df_aud_rect[col_unid].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
+                        else:
+                            df_aud_rect["Unidades_Num"] = 1.0
+
                         conteo_f = df_aud_rect[df_aud_rect["Motivo_Norm"] == "F"].groupby("Pedido").size().to_dict()
                         conteo_s = df_aud_rect[df_aud_rect["Motivo_Norm"] == "S"].groupby("Pedido").size().to_dict()
                         conteo_tot = df_aud_rect.groupby("Pedido").size().to_dict()
 
+                        conteo_master_si = df_aud_rect[df_aud_rect["Es_Master"] == "Sí"].groupby("Pedido").size().to_dict()
+                        conteo_master_no = df_aud_rect[df_aud_rect["Es_Master"] == "No"].groupby("Pedido").size().to_dict()
+
+                        unid_f = df_aud_rect[df_aud_rect["Motivo_Norm"] == "F"].groupby("Pedido")["Unidades_Num"].sum().to_dict()
+                        unid_s = df_aud_rect[df_aud_rect["Motivo_Norm"] == "S"].groupby("Pedido")["Unidades_Num"].sum().to_dict()
+
                         df_pedidos_rect_tienda["Líneas Faltantes"] = df_pedidos_rect_tienda["Pedido"].map(conteo_f).fillna(0).astype(int)
                         df_pedidos_rect_tienda["Líneas Sobrantes"] = df_pedidos_rect_tienda["Pedido"].map(conteo_s).fillna(0).astype(int)
+                        
+                        df_pedidos_rect_tienda["Master No"] = df_pedidos_rect_tienda["Pedido"].map(conteo_master_no).fillna(0).astype(int)
+                        df_pedidos_rect_tienda["Master Sí"] = df_pedidos_rect_tienda["Pedido"].map(conteo_master_si).fillna(0).astype(int)
+
                         df_pedidos_rect_tienda["Líneas Totales"] = df_pedidos_rect_tienda["Pedido"].map(conteo_tot).fillna(0).astype(int)
+
+                        df_pedidos_rect_tienda["Unidades Faltantes"] = df_pedidos_rect_tienda["Pedido"].map(unid_f).fillna(0.0).astype(int)
+                        df_pedidos_rect_tienda["Unidades Sobrantes"] = df_pedidos_rect_tienda["Pedido"].map(unid_s).fillna(0.0).astype(int)
                     else:
                         df_pedidos_rect_tienda["Líneas Faltantes"] = 0
                         df_pedidos_rect_tienda["Líneas Sobrantes"] = 0
+                        df_pedidos_rect_tienda["Master No"] = 0
+                        df_pedidos_rect_tienda["Master Sí"] = 0
                         df_pedidos_rect_tienda["Líneas Totales"] = 0
+                        df_pedidos_rect_tienda["Unidades Faltantes"] = 0
+                        df_pedidos_rect_tienda["Unidades Sobrantes"] = 0
 
                     df_pedidos_rect_tienda_disp = df_pedidos_rect_tienda[[
                         "Tienda", "Pedido", "Casuistica", 
-                        "Líneas Faltantes", "Líneas Sobrantes", "Líneas Totales", 
-                        "Puntos_Obtenidos"
+                        "Líneas Faltantes", "Líneas Sobrantes", 
+                        "Master No", "Master Sí",
+                        "Unidades Faltantes", "Unidades Sobrantes", 
+                        "Líneas Totales", "Puntos_Obtenidos"
                     ]].copy()
 
                     df_pedidos_rect_tienda_disp = df_pedidos_rect_tienda_disp.rename(columns={
@@ -488,11 +538,15 @@ try:
                         df_pedidos_rect_tienda_disp,
                         hide_index=True,
                         column_config={
-                            "Tienda": st.column_config.Column("Tienda", width="small"),
+                            "Tienda": st.column_config.NumberColumn("Tienda", format="%d", width="small"),
                             "Pedido Rectificado": st.column_config.Column("Pedido Rectificado", width="medium"),
                             "Casuística Obtenida": st.column_config.Column("Casuística Obtenida", width="large"),
                             "Líneas Faltantes": st.column_config.NumberColumn("Líneas Faltantes (F)", format="%d", width="small"),
                             "Líneas Sobrantes": st.column_config.NumberColumn("Líneas Sobrantes (S)", format="%d", width="small"),
+                            "Master No": st.column_config.NumberColumn("Master No", format="%d", width="small"),
+                            "Master Sí": st.column_config.NumberColumn("Master Sí", format="%d", width="small"),
+                            "Unidades Faltantes": st.column_config.NumberColumn("Unid. Faltantes (F)", format="%d", width="small"),
+                            "Unidades Sobrantes": st.column_config.NumberColumn("Unid. Sobrantes (S)", format="%d", width="small"),
                             "Líneas Totales": st.column_config.NumberColumn("Líneas Totales", format="%d", width="small"),
                             "Puntaje SLA (0-10)": st.column_config.NumberColumn("Puntaje SLA", format="%.1f ⭐", width="medium")
                         }
@@ -596,4 +650,3 @@ try:
 
 except Exception as e:
     st.error(f"Error cargando el tablero: {e}")
-

@@ -2,7 +2,7 @@
 import glob
 import os
 
-print("🔄 Corrigiendo 'procesar_articulos.py': Restaurando regla estricta F == S para Sustituciones...")
+print("🔄 Corrigiendo la condición de 'Faltante UxB' para evitar falsos positivos en pedidos masivos...")
 
 # 1. Cargar Maestro
 path_maestro_csv = glob.glob("Datos_mensuales/*[Mm]aestro*.csv") + glob.glob("*[Mm]aestro*.csv")
@@ -102,12 +102,9 @@ if list_rect:
         cant_f = len(f_group)
         cant_s = len(s_group)
         
-        has_master_f = (f_group["Es_Master"] == "Sí").any()
-        
         if cant_f > 0 and cant_s > 0:
             if tot_lineas >= 12:
                 cas, pts = "Etiquetas Cambiadas", 0.0
-            # REGLA STRICTA DE EQUIDAD: F == S
             elif cant_f == cant_s:
                 subfams_f = set(f_group["Subfamilia"].dropna().unique())
                 subfams_s = set(s_group["Subfamilia"].dropna().unique())
@@ -117,7 +114,6 @@ if list_rect:
                 coincide_subfam = len(subfams_f.intersection(subfams_s)) > 0
                 coincide_fam = len(fams_f.intersection(fams_s)) > 0
                 
-                # Coincidencia por la línea de mayor volumen
                 unid_coincidencia_principal = False
                 if not f_group.empty and not s_group.empty:
                     max_f_fam = f_group.sort_values(by="Unidades_Num", ascending=False).iloc[0]["Familia"]
@@ -130,10 +126,13 @@ if list_rect:
                 else:
                     cas, pts = "Sustitución Distinta Subfamilia", 5.5
             else:
-                # F != S -> Falta/Sobra
                 cas, pts = "Falta/Sobra", 4.5
         elif cant_f > 0:
-            if has_master_f:
+            # REGLA AJUSTADA: Requiere que al menos el 50% de las líneas faltantes sean Master
+            # o que sea una falta exclusiva de Master
+            cant_master_f = (f_group["Es_Master"] == "Sí").sum()
+            
+            if cant_master_f > 0 and (cant_master_f / cant_f) >= 0.5:
                 cas, pts = "Faltante UxB", 4.0
             else:
                 cas, pts = "Faltante Neto", 4.0
@@ -153,6 +152,6 @@ if list_rect:
         df_sla["Casuistica"] = df_sla["Casuistica"].fillna("Pedido Perfecto")
         df_sla["Puntos_Obtenidos"] = df_sla["Puntos_Obtenidos"].fillna(10.0)
         df_sla.to_parquet("Tablero_SLA_Pedidos.parquet", index=False)
-        print("✅ Tablero_SLA_Pedidos.parquet corregido con la regla estricta F == S para Sustitución.")
+        print("✅ Tablero_SLA_Pedidos.parquet re-evaluado con el umbral ajustado para 'Faltante UxB'.")
 
 print("🚀 Procesamiento finalizado con éxito.")
