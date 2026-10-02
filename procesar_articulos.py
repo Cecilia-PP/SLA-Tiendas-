@@ -1,166 +1,131 @@
-﻿import pandas as pd
-import numpy as np
-import os
+﻿Set-Location "C:\Users\cpe021ar\Documents\Python\Tablero_Satifacción_de_Tienda"
+
+@"
+import pandas as pd
 import glob
+import os
 
-print("🚀 Procesando BDMVTAL y Rectificaciones...")
+print("🔄 Iniciando procesamiento de datos y reevaluación de casuísticas...")
 
-ruta_carpeta = os.path.join(".", "Datos_mensuales")
+# 1. Cargar Maestro de Productos
+path_maestro_csv = glob.glob("Datos_mensuales/*[Mm]aestro*.csv") + glob.glob("*[Mm]aestro*.csv")
+df_maestro = pd.DataFrame()
 
-# 0. MAESTRA DE ZONAS
-archivos_zona = glob.glob(os.path.join(ruta_carpeta, "*ZONA*.xlsx")) + glob.glob(os.path.join(ruta_carpeta, "*ZONA*.csv"))
-df_zona = pd.DataFrame()
-if archivos_zona:
-    f_zona = archivos_zona[0]
+if path_maestro_csv:
+    path_maestro = path_maestro_csv[0]
     try:
-        if f_zona.endswith(".xlsx"):
-            df_z_raw = pd.read_excel(f_zona)
-        else:
-            df_z_raw = pd.read_csv(f_zona, encoding="latin1", sep=None, engine="python")
-        df_z_raw.columns = df_z_raw.columns.astype(str).str.strip()
-        col_t = [c for c in df_z_raw.columns if "tiend" in c.lower()][0]
-        col_resp = [c for c in df_z_raw.columns if "responsable" in c.lower() or "socio" in c.lower()][0]
-        col_gest = [c for c in df_z_raw.columns if "gestion" in c.lower() or "gestión" in c.lower()][0]
-        df_zona = df_z_raw[[col_t, col_resp, col_gest]].copy()
-        df_zona.columns = ["Tienda", "Responsable_Tienda", "Gestion"]
-        df_zona["Tienda"] = df_zona["Tienda"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-        df_zona = df_zona.drop_duplicates(subset=["Tienda"])
-    except Exception as e:
-        print(f"⚠️ Error cargando zonas: {e}")
-
-# 1. DESPACHOS BDMVTAL
-archivos_desp = sorted(glob.glob(os.path.join(ruta_carpeta, "*BDMVTAL*.csv"))) + sorted(glob.glob(os.path.join(ruta_carpeta, "*bdmvtal*.csv")))
-if not archivos_desp:
-    archivos_desp = [f for f in glob.glob(os.path.join(ruta_carpeta, "*.csv")) if "rectif" not in f.lower() and "zona" not in f.lower()]
-
-lista_desp = []
-for f in archivos_desp:
-    for sep in [";", ",", "\t"]:
-        try:
-            df_t = pd.read_csv(f, encoding="latin1", sep=sep, low_memory=False)
-            if len(df_t.columns) > 1 and any("almac" in c.lower() for c in df_t.columns):
-                lista_desp.append(df_t)
-                break
-        except Exception:
-            continue
-
-df_desp = pd.concat(lista_desp, ignore_index=True)
-df_desp.columns = df_desp.columns.str.strip()
-
-col_alm_d = [c for c in df_desp.columns if "almac" in c.lower()][0]
-col_tien_d = [c for c in df_desp.columns if "tiend" in c.lower()][0]
-
-df_desp = df_desp.rename(columns={
-    col_alm_d: "Almacen", 
-    col_tien_d: "Tienda_Original",
-    "Fecha de carga": "Fecha_Carga", 
-    "Pedido": "Pedido_Original", 
-    "Importe": "Importe_Pedido"
-})
-
-df_desp["Pedido"] = df_desp["Pedido_Original"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-df_desp["Tienda"] = df_desp["Tienda_Original"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-df_desp["Almacen"] = df_desp["Almacen"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-
-df_desp["Fecha_DT"] = pd.to_datetime(df_desp["Fecha_Carga"].astype(str), format="%Y%m%d", errors="coerce")
-df_desp["Año"] = df_desp["Fecha_DT"].dt.year
-df_desp["Mes"] = df_desp["Fecha_DT"].dt.month
-
-df_desp_unicos = df_desp.groupby("Pedido", as_index=False).agg(
-    Almacen=("Almacen", "first"),
-    Tienda=("Tienda", "first"),
-    Fecha_Carga=("Fecha_Carga", "first"),
-    Año=("Año", "first"),
-    Mes=("Mes", "first"),
-    Cant_Lineas_Despachadas=("Pedido", "count")
-)
-
-# 2. RECTIFICACIONES (EXCLUYENDO ESTADO 'A')
-archivos_rect = sorted(glob.glob(os.path.join(ruta_carpeta, "*Rectificacion*.csv"))) + sorted(glob.glob(os.path.join(ruta_carpeta, "*rectificacion*.csv")))
-lista_rect = []
-for f in archivos_rect:
-    for sep in [";", ",", "\t"]:
-        try:
-            df_r = pd.read_csv(f, encoding="latin1", sep=sep, low_memory=False)
-            if len(df_r.columns) > 1 and any("almac" in c.lower() for c in df_r.columns):
-                lista_rect.append(df_r)
-                break
-        except Exception:
-            continue
-
-df_rect = pd.concat(lista_rect, ignore_index=True) if lista_rect else pd.DataFrame()
-
-if not df_rect.empty:
-    df_rect.columns = df_rect.columns.str.strip()
-    col_alm_r = [c for c in df_rect.columns if "almac" in c.lower()][0]
-    col_tien_r = [c for c in df_rect.columns if "tiend" in c.lower()][0]
-
-    df_rect = df_rect.rename(columns={col_alm_r: "Almacen", col_tien_r: "Tienda_Original"})
-    df_rect["Pedido"] = df_rect["Pedido"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-    df_rect["Tienda"] = df_rect["Tienda_Original"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-
-    df_rect["Motivo_Clean"] = df_rect["Motivo"].astype(str).str.strip().str.upper()
-    df_rect["Procedencia_Clean"] = df_rect["Procedencia"].astype(str).str.strip().str.upper()
-    df_rect["Estado_Clean"] = df_rect["Estado"].astype(str).str.strip().str.upper()
-    df_rect["Artículo"] = df_rect["Artículo"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-    df_rect["Unid_Grabadas"] = pd.to_numeric(df_rect["Unid/Kgs grabados"].astype(str).str.replace(",", "."), errors="coerce").fillna(0)
-    df_rect["Unid_Abonadas"] = pd.to_numeric(df_rect["Unid/Kgs abonados"].astype(str).str.replace(",", "."), errors="coerce").fillna(0)
-    df_rect["Monto_Rectif"] = pd.to_numeric(df_rect["Imp.tien.PVP S/IVA mon.BD"].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
-
-    # EXCLUSIÓN COMPLETA DEL ESTADO 'A'
-    df_rect = df_rect[df_rect["Estado_Clean"] != "A"].copy()
-
-    def clasificar_pedido(df_ped):
-        cant_lineas = len(df_ped)
-        motivos = set(df_ped["Motivo_Clean"].unique())
-        procedencias = set(df_ped["Procedencia_Clean"].unique())
-        tiene_f = "F" in motivos
-        tiene_s = "S" in motivos
+        df_maestro = pd.read_csv(path_maestro, sep=";", encoding="latin1", dtype=str)
+        df_maestro.columns = df_maestro.columns.str.strip()
         
-        if "T" in procedencias and cant_lineas > 10 and tiene_f and tiene_s:
-            return "Etiquetas Cambiadas", -10.0, 0.0
-        if tiene_f and tiene_s:
-            skus = df_ped["Artículo"].tolist()
-            prefijos = set([s[:3] for s in skus if len(s) >= 3])
-            if len(prefijos) == 1:
-                return "Sustitución Misma Subfamilia", -2.5, 7.5
-            else:
-                return "Sustitución Distinta Subfamilia", -4.5, 5.5
-        if tiene_f and not tiene_s:
-            return "Faltante Neto", -6.0, 4.0
-        if tiene_s and not tiene_f:
-            return "Sobrante Neto", 0.0, 10.0
-        return "Faltante Neto", -6.0, 4.0
+        col_master = [c for c in df_maestro.columns if "bulto master" in c.lower() or "master" in c.lower()]
+        if col_master:
+            c_name = col_master[0]
+            df_maestro["Es_Master"] = df_maestro[c_name].astype(str).str.strip().map({"1": "Sí", "2": "No"}).fillna("No")
+        else:
+            df_maestro["Es_Master"] = "No"
 
-    resumen_pedidos_rect = []
-    for ped, group in df_rect.groupby("Pedido"):
-        casuistica, penalizacion, puntos = clasificar_pedido(group)
-        resumen_pedidos_rect.append({
-            "Pedido": ped,
-            "Casuistica": casuistica,
-            "Penalizacion": penalizacion,
-            "Puntos_Obtenidos": puntos,
-            "Lineas_Rectificadas_Confirmadas": len(group)
-        })
+        cols = list(df_maestro.columns)
+        if cols.count("Descripción Familia") > 1:
+            idx_sub = [i for i, col in enumerate(cols) if col == "Descripción Familia"]
+            if len(idx_sub) > 1:
+                cols[idx_sub[1]] = "Descripción Subfamilia"
+            df_maestro.columns = cols
 
-    df_pedidos_rect_summary = pd.DataFrame(resumen_pedidos_rect)
-else:
-    df_pedidos_rect_summary = pd.DataFrame(columns=["Pedido", "Casuistica", "Penalizacion", "Puntos_Obtenidos", "Lineas_Rectificadas_Confirmadas"])
+        print(f"✅ Maestro cargado desde '{path_maestro}'.")
+    except Exception as e:
+        print(f"⚠️ Error cargando Maestro: {e}")
 
-df_sla_pedidos = df_desp_unicos.merge(df_pedidos_rect_summary, on="Pedido", how="left")
-df_sla_pedidos["Casuistica"] = df_sla_pedidos["Casuistica"].fillna("Pedido Perfecto")
-df_sla_pedidos["Puntos_Obtenidos"] = df_sla_pedidos["Puntos_Obtenidos"].fillna(10.0)
-df_sla_pedidos["Lineas_Rectificadas_Confirmadas"] = df_sla_pedidos["Lineas_Rectificadas_Confirmadas"].fillna(0)
+# 2. Cargar Detalle de Rectificaciones
+archivos_rect = glob.glob("Datos_mensuales/*Rectif*.csv") + glob.glob("Datos_mensuales/*rectif*.csv")
+list_rect = []
 
-if not df_zona.empty:
-    df_sla_pedidos = df_sla_pedidos.merge(df_zona, on="Tienda", how="left")
-    if not df_rect.empty:
-        df_rect = df_rect.merge(df_zona, on="Tienda", how="left")
+for f in archivos_rect:
+    try:
+        df_tmp = pd.read_csv(f, sep=";", encoding="latin1", dtype=str)
+        list_rect.append(df_tmp)
+    except Exception as e:
+        print(f"Error cargando {f}: {e}")
 
-df_sla_pedidos["Responsable_Tienda"] = df_sla_pedidos.get("Responsable_Tienda", pd.Series(dtype=str)).fillna("Sin Asignar")
-df_sla_pedidos["Gestion"] = df_sla_pedidos.get("Gestion", pd.Series(dtype=str)).fillna("Sin Asignar")
+if list_rect:
+    df_rect_all = pd.concat(list_rect, ignore_index=True)
+    df_rect_all.columns = df_rect_all.columns.str.strip()
 
-df_sla_pedidos.to_parquet("Tablero_SLA_Pedidos.parquet", index=False, compression="snappy")
-df_rect.to_parquet("Tablero_Rectificaciones_Detalle.parquet", index=False, compression="snappy")
+    col_art_rect = "Artículo" if "Artículo" in df_rect_all.columns else "SKU"
+    col_art_mae = "Artículo" if "Artículo" in df_maestro.columns else ("SKU" if "SKU" in df_maestro.columns else None)
 
-print("✅ Parquets generados correctamente.")
+    if not df_maestro.empty and col_art_mae and col_art_rect:
+        df_rect_all[col_art_rect] = df_rect_all[col_art_rect].astype(str).str.strip().str.lstrip("0")
+        df_maestro[col_art_mae] = df_maestro[col_art_mae].astype(str).str.strip().str.lstrip("0")
+
+        cols_a_traer = [col_art_mae]
+        if "Descripción Familia" in df_maestro.columns:
+            cols_a_traer.append("Descripción Familia")
+        elif "Familia" in df_maestro.columns:
+            cols_a_traer.append("Familia")
+
+        if "Descripción Subfamilia" in df_maestro.columns:
+            cols_a_traer.append("Descripción Subfamilia")
+        elif "Subfamilia" in df_maestro.columns:
+            cols_a_traer.append("Subfamilia")
+
+        if "Es_Master" in df_maestro.columns:
+            cols_a_traer.append("Es_Master")
+
+        df_maestro_clean = df_maestro[cols_a_traer].drop_duplicates(subset=[col_art_mae])
+        df_rect_all = df_rect_all.merge(df_maestro_clean, left_on=col_art_rect, right_on=col_art_mae, how="left")
+
+        if "Descripción Familia" in df_rect_all.columns:
+            df_rect_all["Familia"] = df_rect_all["Descripción Familia"]
+        if "Descripción Subfamilia" in df_rect_all.columns:
+            df_rect_all["Subfamilia"] = df_rect_all["Descripción Subfamilia"]
+
+    df_rect_all["Familia"] = df_rect_all.get("Familia", pd.Series()).fillna("Sin Familia")
+    df_rect_all["Subfamilia"] = df_rect_all.get("Subfamilia", pd.Series()).fillna("Sin Subfamilia")
+    df_rect_all["Es_Master"] = df_rect_all.get("Es_Master", pd.Series()).fillna("No")
+
+    # Mapeo de Monto
+    col_monto = None
+    for c in ["Monto_Rectif", "Imp.tien.PVP S/IVA mon.BD", "Monto", "Importe"]:
+        if c in df_rect_all.columns:
+            col_monto = c
+            break
+
+    if col_monto:
+        df_rect_all["Monto_Rectif"] = pd.to_numeric(df_rect_all[col_monto].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
+    else:
+        df_rect_all["Monto_Rectif"] = 0.0
+
+    df_rect_all.to_parquet("Tablero_Rectificaciones_Detalle.parquet", index=False)
+    print(f"📦 Tablero_Rectificaciones_Detalle.parquet guardado con {len(df_rect_all):,} filas.")
+
+    # 3. Actualizar Parquet de SLA Pedidos con Casuística Faltante Neto Master (UXB)
+    if os.path.exists("Tablero_SLA_Pedidos.parquet"):
+        df_sla = pd.read_parquet("Tablero_SLA_Pedidos.parquet")
+        
+        # Identificar pedidos con al menos un faltante ('F') en artículo Bulto Master ('Sí')
+        col_motivo = "Motivo_Clean" if "Motivo_Clean" in df_rect_all.columns else "Motivo"
+        pedidos_falt_master = set(
+            df_rect_all[
+                (df_rect_all[col_motivo].astype(str).str.strip().str.upper() == "F") & 
+                (df_rect_all["Es_Master"] == "Sí")
+            ]["Pedido"].dropna().unique()
+        )
+
+        def reevaluar_casuistica(row):
+            cas = str(row["Casuistica"])
+            ped = str(row["Pedido"])
+            if cas in ["Faltante Neto", "Faltante Neto Fraccionado", "Faltante Neto Master (UXB)"]:
+                if ped in pedidos_falt_master:
+                    return "Faltante Neto Master (UXB)"
+                else:
+                    return "Faltante Neto Fraccionado"
+            return cas
+
+        df_sla["Casuistica"] = df_sla.apply(reevaluar_casuistica, axis=1)
+        df_sla.to_parquet("Tablero_SLA_Pedidos.parquet", index=False)
+        print("✅ Tablero_SLA_Pedidos.parquet actualizado con las nuevas casuísticas UXB.")
+
+print("🚀 Procesamiento finalizado.")
+"@ | Out-File -FilePath procesar_articulos.py -Encoding utf8
+
+.\python_env\python.exe procesar_articulos.py
