@@ -2,9 +2,8 @@
 import glob
 import os
 
-print("🔄 Re-evaluando casuísticas con Criterio 1.2 (>= 12 líneas mixtas)...")
+print("🔄 Eliminando 'Formato no Entregado' y unificando en 8 casuísticas principales...")
 
-# 1. Cargar Maestro
 path_maestro_csv = glob.glob("Datos_mensuales/*[Mm]aestro*.csv") + glob.glob("*[Mm]aestro*.csv")
 df_maestro = pd.DataFrame()
 
@@ -28,8 +27,7 @@ if path_maestro_csv:
     except Exception as e:
         print(f"⚠️ Error cargando Maestro: {e}")
 
-# 2. Cargar Rectificaciones
-archivos_rect = glob.glob("Datos_mensuales/*Rectif*.csv") + glob.glob("Datos_mensuales/*rectif*.csv")
+archivos_rect = glob.glob("Datos_mensuales/*Rectif*.csv") + glob.glob("Datos_mensuales/*rectif*.csv") + glob.glob("*Rectif*.csv")
 list_rect = []
 
 for f in archivos_rect:
@@ -73,14 +71,12 @@ if list_rect:
     if col_monto:
         df_rect_all["Monto_Rectif"] = pd.to_numeric(df_rect_all[col_monto[0]].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
 
-    # Desduplicar
     cols_clave_rect = ["Pedido", "Nº Rectificación", col_art_rect, "Motivo"]
     cols_exist = [c for c in cols_clave_rect if c in df_rect_all.columns]
     df_rect_all = df_rect_all.drop_duplicates(subset=cols_exist, keep="first")
 
     df_rect_all.to_parquet("Tablero_Rectificaciones_Detalle.parquet", index=False)
 
-    # 3. RE-CLASIFICACIÓN STRICTA CON CRITERIO 1.2 (>= 12 LÍNEAS MIXTAS)
     col_motivo = "Motivo_Clean" if "Motivo_Clean" in df_rect_all.columns else "Motivo"
     df_rect_all["Motivo_Norm"] = df_rect_all[col_motivo].astype(str).str.strip().str.upper()
 
@@ -96,26 +92,29 @@ if list_rect:
         tot = row["Total_Lineas"]
         f = row["Cant_F"]
         s = row["Cant_S"]
+        has_master_f = row["Tiene_Master_F"]
         
         if f > 0 and s > 0:
             if tot >= 12:
                 return "Etiquetas Cambiadas", 0.0
-            elif row["Subfams"] <= 1:
-                return "Sustitución Misma Subfamilia", 7.5
+            elif f == s:
+                if row["Subfams"] <= 1:
+                    return "Sustitución Misma Subfamilia", 7.5
+                else:
+                    return "Sustitución Distinta Subfamilia", 5.5
             else:
-                return "Sustitución Distinta Subfamilia", 5.5
+                return "Falta/Sobra", 4.5
         elif f > 0:
-            if row["Tiene_Master_F"]:
-                return "Faltante Neto Master (UXB)", 4.0
+            if has_master_f:
+                return "Faltante UxB", 4.0
             else:
-                return "Faltante Neto Fraccionado", 4.0
+                return "Faltante Neto", 4.0
         elif s > 0:
             return "Sobrante Neto", 10.0
         return "Pedido Perfecto", 10.0
 
     resumen_ped[["Casuistica", "Puntos_Obtenidos"]] = resumen_ped.apply(clasificar_pedido, axis=1, result_type="expand")
 
-    # Actualizar Tablero_SLA_Pedidos.parquet
     if os.path.exists("Tablero_SLA_Pedidos.parquet"):
         df_sla = pd.read_parquet("Tablero_SLA_Pedidos.parquet")
         df_sla = df_sla.drop(columns=["Casuistica", "Puntos_Obtenidos"], errors="ignore")
@@ -123,6 +122,6 @@ if list_rect:
         df_sla["Casuistica"] = df_sla["Casuistica"].fillna("Pedido Perfecto")
         df_sla["Puntos_Obtenidos"] = df_sla["Puntos_Obtenidos"].fillna(10.0)
         df_sla.to_parquet("Tablero_SLA_Pedidos.parquet", index=False)
-        print("✅ Tablero_SLA_Pedidos.parquet re-clasificado exitosamente con Criterio 1.2 (>= 12 líneas).")
+        print("✅ Tablero_SLA_Pedidos.parquet actualizado sin 'Formato no Entregado'.")
 
-print("🚀 Procesamiento finalizado.")
+print("🚀 Procesamiento completado.")
