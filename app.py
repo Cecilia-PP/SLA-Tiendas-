@@ -63,27 +63,6 @@ try:
     if not df_sla.empty:
         st.sidebar.header("🔍 Filtros de Búsqueda")
 
-        # 🚨 FILTRO DE OUTLIERS POR POCOS PEDIDOS EN TIENDAS (CORREGIDO)
-        st.sidebar.markdown("---")
-        st.sidebar.header("⚠️ Filtro de Outliers (Pocos Pedidos)")
-        
-        pedidos_por_tienda = df_sla.groupby("Tienda")["Pedido"].nunique()
-        umbral_min_pedidos = st.sidebar.number_input(
-            "Mínimo de pedidos recibidos por tienda:",
-            min_value=1, max_value=100, value=5, step=1,
-            help="Excluye sucursales con muy pocos pedidos para evitar distorsiones estadísticas en el promedio SLA."
-        )
-        
-        tiendas_pocas_compras = set(pedidos_por_tienda[pedidos_por_tienda < umbral_min_pedidos].index)
-        activar_filtro_outliers = st.sidebar.checkbox("Excluir Tiendas con Pocos Pedidos", value=False)
-        
-        if activar_filtro_outliers and len(tiendas_pocas_compras) > 0:
-            df_sla = df_sla[~df_sla["Tienda"].isin(tiendas_pocas_compras)]
-            if not df_rect.empty:
-                df_rect = df_rect[~df_rect["Tienda"].isin(tiendas_pocas_compras)]
-            st.sidebar.warning(f"Excluidas {len(tiendas_pocas_compras):,} tiendas con < {umbral_min_pedidos} pedidos.")
-        st.sidebar.markdown("---")
-
         if "Almacen" in df_sla.columns:
             almacenes = sorted([str(x) for x in df_sla["Almacen"].dropna().unique()])
             almacen_sel = st.sidebar.multiselect("Almacén:", almacenes, default=almacenes)
@@ -161,6 +140,26 @@ try:
             meses = sorted([int(x) for x in df_sla["Mes"].dropna().unique()])
             mes_sel = st.sidebar.multiselect("Mes:", meses, default=meses)
             df_sla = df_sla[df_sla["Mes"].isin(mes_sel) | df_sla["Mes"].isna()]
+
+        # 🚨 FILTRO DE OUTLIERS UBICADO AL FINAL DE LA BARRA LATERAL
+        st.sidebar.markdown("---")
+        st.sidebar.header("⚠️ Filtro de Outliers (Pocos Pedidos)")
+        
+        pedidos_por_tienda = df_sla.groupby("Tienda")["Pedido"].nunique()
+        umbral_min_pedidos = st.sidebar.number_input(
+            "Mínimo de pedidos recibidos por tienda:",
+            min_value=1, max_value=100, value=5, step=1,
+            help="Excluye sucursales con muy pocos pedidos para evitar distorsiones estadísticas en el promedio SLA."
+        )
+        
+        tiendas_pocas_compras = set(pedidos_por_tienda[pedidos_por_tienda < umbral_min_pedidos].index)
+        activar_filtro_outliers = st.sidebar.checkbox("Excluir Tiendas con Pocos Pedidos", value=False)
+        
+        if activar_filtro_outliers and len(tiendas_pocas_compras) > 0:
+            df_sla = df_sla[~df_sla["Tienda"].isin(tiendas_pocas_compras)]
+            if not df_rect.empty:
+                df_rect = df_rect[~df_rect["Tienda"].isin(tiendas_pocas_compras)]
+            st.sidebar.warning(f"Excluidas {len(tiendas_pocas_compras):,} tiendas con < {umbral_min_pedidos} pedidos.")
 
         tab1, tab2, tab3 = st.tabs([
             "📊 1. Ranking SLA por Almacén y Tienda",
