@@ -36,7 +36,6 @@ def cargar_datos_sla():
         df_sla = pd.read_parquet("Tablero_SLA_Pedidos.parquet")
         df_rect = pd.read_parquet("Tablero_Rectificaciones_Detalle.parquet") if os.path.exists("Tablero_Rectificaciones_Detalle.parquet") else pd.DataFrame()
         
-        # Garantizar columnas mínimas en df_sla
         if "Almacen" not in df_sla.columns:
             col_alm = [c for c in df_sla.columns if any(k in c.lower() for k in ["almacen", "almacén", "cd", "cod_almacen"])]
             df_sla["Almacen"] = df_sla[col_alm[0]].astype(str).str.strip() if col_alm else "501"
@@ -75,7 +74,6 @@ def cargar_datos_sla():
                 else:
                     df_rect["Monto_Rectif"] = 0.0
 
-            # Mapear datos faltantes a df_rect desde df_sla
             if "Tienda" in df_rect.columns and "Tienda" in df_sla.columns:
                 if "Responsable_Tienda" in df_sla.columns:
                     mapa_resp = df_sla[["Tienda", "Responsable_Tienda"]].drop_duplicates().set_index("Tienda")["Responsable_Tienda"].to_dict()
@@ -174,7 +172,6 @@ try:
             mes_sel = st.sidebar.multiselect("Mes:", meses, default=meses)
             df_sla = df_sla[df_sla["Mes"].isin(mes_sel) | df_sla["Mes"].isna()]
 
-        # 🚨 FILTRO DE OUTLIERS (UBICADO AL FINAL DE LA BARRA LATERAL)
         st.sidebar.markdown("---")
         st.sidebar.header("⚠️ Filtro de Outliers (Pocos Pedidos)")
         
@@ -232,7 +229,11 @@ try:
             df_alm_mes["Puntaje SLA"] = (df_alm_mes["Puntos_Obtenidos"] / df_alm_mes["Puntos_Posibles"]) * 10.0
             df_alm_mes["Puntaje SLA"] = df_alm_mes["Puntaje SLA"].fillna(0.0)
             df_alm_mes["Etiqueta_Almacen"] = "Almacén " + df_alm_mes["Almacen"].astype(str)
+            
+            # ORDEN CRONOLÓGICO STRICTO POR NÚMERO DE MES
             df_alm_mes = df_alm_mes.sort_values(by=["Mes_Num", "Etiqueta_Almacen"]).reset_index(drop=True)
+            meses_ordenados = sorted([m for m in df_sla_mes["Mes_Num"].unique() if m in mapa_meses])
+            orden_nombres_meses = [mapa_meses[m] for m in meses_ordenados]
 
             mapa_colores_alm = {
                 "Almacén 501": "#9B59B6", "Almacén 503": "#2BA884", 
@@ -244,19 +245,31 @@ try:
                 barmode="group", text="Puntaje SLA", color_discrete_map=mapa_colores_alm
             )
             fig_mes_alm.update_traces(texttemplate='<b>%{text:.2f} ⭐</b>', textposition='outside', cliponaxis=False)
-            fig_mes_alm.update_layout(yaxis=dict(range=[7.0, 10.25], title="Puntaje SLA (Escala 7 a 10)"), xaxis=dict(title="Mes"), height=390, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+            fig_mes_alm.update_layout(
+                yaxis=dict(range=[7.0, 10.25], title="Puntaje SLA (Escala 7 a 10)"), 
+                xaxis=dict(title="Mes", categoryorder="array", categoryarray=orden_nombres_meses), 
+                height=390, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
+            )
             st.plotly_chart(fig_mes_alm, use_container_width=True)
 
             st.markdown("### 📊 Evolución Mensual de Casuísticas y Cantidad de Líneas Rectificadas")
 
             df_sla_cas_errores = df_sla_mes[df_sla_mes["Casuistica"] != "Pedido Perfecto"].copy()
-            df_cas_mes = df_sla_cas_errores.groupby(["Mes_Num", "Nombre_Mes", "Casuistica"], as_index=False).agg(Cantidad_Pedidos=("Pedido", "count")).sort_values(by=["Mes_Num"]).reset_index(drop=True)
+            
+            # 1. Agrupar casuísticas asegurando orden numérico
+            df_cas_mes = df_sla_cas_errores.groupby(["Mes_Num", "Nombre_Mes", "Casuistica"], as_index=False).agg(Cantidad_Pedidos=("Pedido", "count"))
+            df_cas_mes = df_cas_mes.sort_values(by=["Mes_Num"]).reset_index(drop=True)
 
+            # 2. Agrupar líneas rectificadas asegurando orden numérico
             if not df_rect.empty:
                 df_rect_m = df_rect.copy()
                 if "Fecha de Grabación" in df_rect_m.columns:
-                    df_rect_m["Fecha_DT"] = pd.to_datetime(df_rect_m["Fecha de Grabación"].astype(str), format="%Y%m%d", errors="coerce")
-                    df_rect_m["Mes_Num"] = df_rect_m["Fecha_DT"].dt.month.fillna(0).astype(int)
+                    fec_rect_str = df_rect_m["Fecha de Grabación"].astype(str).str.strip()
+                    fec_rect_dt = pd.to_datetime(fec_rect_str, format="%Y%m%d", errors="coerce")
+                    mask_r_na = fec_rect_dt.isna()
+                    if mask_r_na.any():
+                        fec_rect_dt[mask_r_na] = pd.to_datetime(fec_rect_str[mask_r_na], dayfirst=True, errors="coerce")
+                    df_rect_m["Mes_Num"] = fec_rect_dt.dt.month.fillna(0).astype(int)
                 elif "Mes" in df_rect_m.columns:
                     df_rect_m["Mes_Num"] = pd.to_numeric(df_rect_m["Mes"], errors="coerce").fillna(0).astype(int)
                 else:
@@ -266,8 +279,12 @@ try:
             else:
                 df_lineas_mes = pd.DataFrame(columns=["Mes_Num", "Cant_Lineas_Rectificadas"])
 
-            df_meses_unicos = df_sla_mes[["Mes_Num", "Nombre_Mes"]].drop_duplicates().sort_values("Mes_Num").reset_index(drop=True)
-            df_lineas_mes = df_meses_unicos.merge(df_lineas_mes, on="Mes_Num", how="left").fillna({"Cant_Lineas_Rectificadas": 0}).sort_values("Mes_Num")
+            # 3. Mapear meses presentes y ordenar exactamente por Mes_Num (6, 7, 8, 9)
+            df_meses_base = pd.DataFrame({"Mes_Num": meses_ordenados})
+            df_meses_base["Nombre_Mes"] = df_meses_base["Mes_Num"].map(mapa_meses)
+            
+            df_lineas_mes = df_meses_base.merge(df_lineas_mes, on="Mes_Num", how="left").fillna({"Cant_Lineas_Rectificadas": 0})
+            df_lineas_mes = df_lineas_mes.sort_values("Mes_Num").reset_index(drop=True)
 
             colores_cas = {
                 "Sobrante Neto": "#0077B6", "Sustitución Misma Subfamilia": "#80ED99",
@@ -281,13 +298,43 @@ try:
                 "Falta/Sobra", "Faltante Neto", "Faltante UxB", "Etiquetas Cambiadas"
             ]
             
+            # USAR EL NÚMERO DE MES EN EJE X INTERNO PARA EVITAR ZIG-ZAG
             for cas in casuisticas_orden:
                 df_c = df_cas_mes[df_cas_mes["Casuistica"] == cas].sort_values("Mes_Num")
                 if not df_c.empty:
-                    fig_comb.add_trace(go.Bar(x=df_c["Nombre_Mes"], y=df_c["Cantidad_Pedidos"], name=cas, marker_color=colores_cas.get(cas, "#999999"), text=df_c["Cantidad_Pedidos"], textposition="inside"), secondary_y=False)
+                    fig_comb.add_trace(go.Bar(
+                        x=df_c["Mes_Num"], 
+                        y=df_c["Cantidad_Pedidos"], 
+                        name=cas, 
+                        marker_color=colores_cas.get(cas, "#999999"), 
+                        text=df_c["Cantidad_Pedidos"], 
+                        textposition="inside"
+                    ), secondary_y=False)
 
-            fig_comb.add_trace(go.Scatter(x=df_lineas_mes["Nombre_Mes"], y=df_lineas_mes["Cant_Lineas_Rectificadas"], name="Líneas Rectificadas", mode="lines+markers+text", line=dict(color="#48CAE4", width=4.0), marker=dict(size=10, color="#03045E"), text=[f"{int(x):,}" for x in df_lineas_mes["Cant_Lineas_Rectificadas"]], textposition="top center"), secondary_y=True)
-            fig_comb.update_layout(barmode="stack", height=420, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", legend=dict(orientation="h", y=-0.25, x=0.5, xanchor="center"))
+            # LÍNEA CONTINUA GARANTIZADA POR MES_NUM (6, 7, 8, 9)
+            fig_comb.add_trace(go.Scatter(
+                x=df_lineas_mes["Mes_Num"], 
+                y=df_lineas_mes["Cant_Lineas_Rectificadas"], 
+                name="Líneas Rectificadas", 
+                mode="lines+markers+text", 
+                line=dict(color="#00B4D8", width=4.0), 
+                marker=dict(size=10, color="#03045E"), 
+                text=[f"{int(x):,}" for x in df_lineas_mes["Cant_Lineas_Rectificadas"]], 
+                textposition="top center"
+            ), secondary_y=True)
+
+            # REEMPLAZAR NÚMEROS DE MES EN EL EJE X CON SUS NOMBRES CORRESPONDIENTES
+            fig_comb.update_layout(
+                barmode="stack", height=420, 
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", 
+                legend=dict(orientation="h", y=-0.25, x=0.5, xanchor="center"),
+                xaxis=dict(
+                    title="Mes",
+                    tickmode="array",
+                    tickvals=meses_ordenados,
+                    ticktext=orden_nombres_meses
+                )
+            )
             st.plotly_chart(fig_comb, use_container_width=True)
 
             st.markdown("---")
@@ -678,7 +725,7 @@ try:
                         }
                     )
                 else:
-                    st.success("🎉 La selección actual no presenta rectificaciones de artículos.")
+                    st.success("🎉 La selección actual no presents rectificaciones de artículos.")
 
 except Exception as e:
     st.error(f"Error cargando el tablero: {e}")
