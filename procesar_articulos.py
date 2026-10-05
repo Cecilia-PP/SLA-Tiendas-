@@ -2,9 +2,109 @@
 import glob
 import os
 
-print("🔄 Corrigiendo la condición de 'Faltante UxB' para evitar falsos positivos en pedidos masivos...")
+print("🔄 Cruzando 'RESPONSABLE TIENDA / SOCIO ESTRATEGICO' con manejo de excepciones de formato...")
 
-# 1. Cargar Maestro
+# 1. Cargar Mapa desde ZONA DE SUPERVISION
+path_zona = glob.glob("Datos_mensuales/*[Zz]ona*.csv") + glob.glob("*[Zz]ona*.csv")
+mapa_supervisores = {}
+
+if path_zona:
+    try:
+        # Probar lectura con punto y coma y salto de líneas erróneas
+        try:
+            df_zona = pd.read_csv(path_zona[0], sep=";", encoding="latin1", dtype=str, on_bad_lines="skip")
+        except Exception:
+            df_zona = pd.read_csv(path_zona[0], sep=None, engine="python", encoding="latin1", dtype=str, on_bad_lines="skip")
+
+        df_zona.columns = df_zona.columns.str.strip().str.upper()
+        
+        col_t = [c for c in df_zona.columns if "TIENDA" in c][0]
+        
+        col_resp_exacta = None
+        for c in df_zona.columns:
+            if "RESPONSABLE TIENDA / SOCIO ESTRATEGICO" in c or "RESPONSABLE TIENDA" in c or "SOCIO ESTRATEGICO" in c or "SUPERVISOR" in c:
+                col_resp_exacta = c
+                break
+                
+        if col_t and col_resp_exacta:
+            df_zona[col_t] = df_zona[col_t].astype(str).str.strip().str.lstrip("0")
+            mapa_supervisores = df_zona.dropna(subset=[col_t]).drop_duplicates(subset=[col_t]).set_index(col_t)[col_resp_exacta].str.strip().to_dict()
+            print(f"  └─ Carga exitosa usando columna: '{col_resp_exacta}' desde {path_zona[0]} ({len(mapa_supervisores)} tiendas asociadas)")
+    except Exception as e:
+        print(f"⚠️️ Error cargando archivo de supervisión: {e}")
+
+# 2. Cargar BDMVTAL (Pedidos Totales)
+archivos_bd = glob.glob("Datos_mensuales/BDMVTAL*.csv") + glob.glob("BDMVTAL*.csv")
+list_bd = []
+
+for f in archivos_bd:
+    try:
+        df_temp = pd.read_csv(f, sep=";", encoding="latin1", dtype=str)
+        df_temp.columns = df_temp.columns.str.strip()
+        list_bd.append(df_temp)
+        print(f"  └─ Cargado pedidos: {f}")
+    except Exception as e:
+        print(f"⚠️ Error cargando {f}: {e}")
+
+if list_bd:
+    df_sla = pd.concat(list_bd, ignore_index=True)
+    df_sla.columns = df_sla.columns.str.strip()
+    
+    # Estandarizar Pedido
+    col_ped = [c for c in df_sla.columns if c.lower() in ["nº de pedido", "pedido", "nº pedido", "nro_pedido", "num_pedido"]]
+    if col_ped:
+        df_sla["Pedido"] = df_sla[col_ped[0]].astype(str).str.strip()
+    else:
+        df_sla["Pedido"] = df_sla.iloc[:, 0].astype(str).str.strip()
+
+    # Estandarizar Tienda
+    col_tien = [c for c in df_sla.columns if any(k in c.lower() for k in ["cod. suc. des", "tienda", "sucursal", "cod_suc_des", "suc_des"])]
+    if col_tien:
+        df_sla["Tienda"] = df_sla[col_tien[0]].astype(str).str.strip().str.lstrip("0")
+    else:
+        df_sla["Tienda"] = "Sin Tienda"
+
+    # Estandarizar Almacen
+    col_alm = [c for c in df_sla.columns if any(k in c.lower() for k in ["cod. almacen", "almacen", "almacén", "cod_almacen", "cd", "suc_ori"])]
+    if col_alm:
+        df_sla["Almacen"] = df_sla[col_alm[0]].astype(str).str.strip()
+    else:
+        df_sla["Almacen"] = "501"
+
+    # Estandarizar Gestion
+    col_gest = [c for c in df_sla.columns if any(k in c.lower() for k in ["gestion", "gestión", "zona", "region"])]
+    if col_gest:
+        df_sla["Gestion"] = df_sla[col_gest[0]].astype(str).str.strip()
+    else:
+        df_sla["Gestion"] = "General"
+
+    # Mapear Responsable_Tienda / Socio Estratégico
+    if mapa_supervisores:
+        df_sla["Responsable_Tienda"] = df_sla["Tienda"].map(mapa_supervisores).fillna("Sin Asignar")
+    else:
+        df_sla["Responsable_Tienda"] = "Sin Asignar"
+
+    # Estandarizar Fecha, Año y Mes
+    col_fec = [c for c in df_sla.columns if any(k in c.lower() for k in ["fecha servido", "fecha_servido", "fecha de grabación", "fecha"])]
+    if col_fec:
+        fec_str = df_sla[col_fec[0]].astype(str).str.strip()
+        fec_dt = pd.to_datetime(fec_str, format="%Y%m%d", errors="coerce")
+        mask_na = fec_dt.isna()
+        if mask_na.any():
+            fec_dt[mask_na] = pd.to_datetime(fec_str[mask_na], dayfirst=True, errors="coerce")
+            
+        df_sla["Fecha_DT"] = fec_dt
+        df_sla["Año"] = df_sla["Fecha_DT"].dt.year.fillna(2026).astype(int)
+        df_sla["Mes"] = df_sla["Fecha_DT"].dt.month.fillna(0).astype(int)
+    else:
+        df_sla["Año"] = 2026
+        df_sla["Mes"] = 0
+
+    df_sla = df_sla.drop_duplicates(subset=["Pedido"], keep="first")
+else:
+    df_sla = pd.DataFrame(columns=["Pedido", "Tienda", "Almacen", "Gestion", "Responsable_Tienda", "Año", "Mes"])
+
+# 3. Cargar Maestro
 path_maestro_csv = glob.glob("Datos_mensuales/*[Mm]aestro*.csv") + glob.glob("*[Mm]aestro*.csv")
 df_maestro = pd.DataFrame()
 
@@ -28,12 +128,15 @@ if path_maestro_csv:
     except Exception as e:
         print(f"⚠️ Error cargando Maestro: {e}")
 
-archivos_rect = glob.glob("Datos_mensuales/*Rectif*.csv") + glob.glob("Datos_mensuales/*rectif*.csv") + glob.glob("*Rectif*.csv")
+# 4. Cargar Rectificaciones
+archivos_rect = glob.glob("Datos_mensuales/*[Rr]ectif*.csv") + glob.glob("*[Rr]ectif*.csv")
 list_rect = []
 
 for f in archivos_rect:
     try:
-        list_rect.append(pd.read_csv(f, sep=";", encoding="latin1", dtype=str))
+        df_t = pd.read_csv(f, sep=";", encoding="latin1", dtype=str)
+        df_t.columns = df_t.columns.str.strip()
+        list_rect.append(df_t)
     except Exception as e:
         pass
 
@@ -68,6 +171,12 @@ if list_rect:
     df_rect_all["Subfamilia"] = df_rect_all.get("Subfamilia", pd.Series()).fillna("Sin Subfamilia")
     df_rect_all["Es_Master"] = df_rect_all.get("Es_Master", pd.Series()).fillna("No")
 
+    col_tien_r = [c for c in df_rect_all.columns if any(k in c.lower() for k in ["tienda", "sucursal", "cod_suc_des"])]
+    if col_tien_r:
+        df_rect_all["Tienda"] = df_rect_all[col_tien_r[0]].astype(str).str.strip().str.lstrip("0")
+        if mapa_supervisores:
+            df_rect_all["Responsable_Tienda"] = df_rect_all["Tienda"].map(mapa_supervisores).fillna("Sin Asignar")
+
     col_unid = None
     for c in ["Unid/Kgs grabados", "Unid_Grabadas", "Unidades Grabadas", "Unid/Kgs abonados"]:
         if c in df_rect_all.columns:
@@ -92,6 +201,7 @@ if list_rect:
     col_motivo = "Motivo_Clean" if "Motivo_Clean" in df_rect_all.columns else "Motivo"
     df_rect_all["Motivo_Norm"] = df_rect_all[col_motivo].astype(str).str.strip().str.upper()
 
+    # 5. Clasificar cada pedido
     pedidos_clasif = []
 
     for ped, group in df_rect_all.groupby("Pedido"):
@@ -128,10 +238,7 @@ if list_rect:
             else:
                 cas, pts = "Falta/Sobra", 4.5
         elif cant_f > 0:
-            # REGLA AJUSTADA: Requiere que al menos el 50% de las líneas faltantes sean Master
-            # o que sea una falta exclusiva de Master
             cant_master_f = (f_group["Es_Master"] == "Sí").sum()
-            
             if cant_master_f > 0 and (cant_master_f / cant_f) >= 0.5:
                 cas, pts = "Faltante UxB", 4.0
             else:
@@ -145,13 +252,12 @@ if list_rect:
 
     resumen_ped = pd.DataFrame(pedidos_clasif)
 
-    if os.path.exists("Tablero_SLA_Pedidos.parquet"):
-        df_sla = pd.read_parquet("Tablero_SLA_Pedidos.parquet")
+    if not df_sla.empty:
         df_sla = df_sla.drop(columns=["Casuistica", "Puntos_Obtenidos"], errors="ignore")
         df_sla = df_sla.merge(resumen_ped, on="Pedido", how="left")
         df_sla["Casuistica"] = df_sla["Casuistica"].fillna("Pedido Perfecto")
         df_sla["Puntos_Obtenidos"] = df_sla["Puntos_Obtenidos"].fillna(10.0)
         df_sla.to_parquet("Tablero_SLA_Pedidos.parquet", index=False)
-        print("✅ Tablero_SLA_Pedidos.parquet re-evaluado con el umbral ajustado para 'Faltante UxB'.")
+        print("✅ Base Tablero_SLA_Pedidos.parquet actualizada con los datos exactos del Responsable/Socio Estratégico.")
 
-print("🚀 Procesamiento finalizado con éxito.")
+print("🚀 Proceso de mapeo finalizado exitosamente.")

@@ -36,23 +36,56 @@ def cargar_datos_sla():
         df_sla = pd.read_parquet("Tablero_SLA_Pedidos.parquet")
         df_rect = pd.read_parquet("Tablero_Rectificaciones_Detalle.parquet") if os.path.exists("Tablero_Rectificaciones_Detalle.parquet") else pd.DataFrame()
         
-        if "Responsable_Tienda" in df_sla.columns:
-            df_sla["Responsable_Tienda"] = df_sla["Responsable_Tienda"].apply(corregir_encoding_texto)
-        
-        if not df_rect.empty and "Monto_Rectif" not in df_rect.columns:
-            col_m = None
-            for c in ["Imp.tien.PVP S/IVA mon.BD", "Monto", "Importe"]:
-                if c in df_rect.columns:
-                    col_m = c
-                    break
-            if col_m:
-                df_rect["Monto_Rectif"] = pd.to_numeric(df_rect[col_m].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
-            else:
-                df_rect["Monto_Rectif"] = 0.0
+        # Garantizar columnas mínimas en df_sla
+        if "Almacen" not in df_sla.columns:
+            col_alm = [c for c in df_sla.columns if any(k in c.lower() for k in ["almacen", "almacén", "cd", "cod_almacen"])]
+            df_sla["Almacen"] = df_sla[col_alm[0]].astype(str).str.strip() if col_alm else "501"
+            
+        if "Tienda" not in df_sla.columns:
+            col_t = [c for c in df_sla.columns if any(k in c.lower() for k in ["tienda", "sucursal", "cod_suc_des"])]
+            df_sla["Tienda"] = df_sla[col_t[0]].astype(str).str.strip() if col_t else "Sin Tienda"
 
-        if not df_rect.empty and "Tienda" in df_rect.columns and "Tienda" in df_sla.columns and "Responsable_Tienda" in df_sla.columns:
-            mapa_resp = df_sla[["Tienda", "Responsable_Tienda"]].drop_duplicates().set_index("Tienda")["Responsable_Tienda"].to_dict()
-            df_rect["Responsable_Tienda"] = df_rect["Tienda"].map(mapa_resp)
+        if "Gestion" not in df_sla.columns:
+            col_g = [c for c in df_sla.columns if any(k in c.lower() for k in ["gestion", "gestión", "zona"])]
+            df_sla["Gestion"] = df_sla[col_g[0]].astype(str).str.strip() if col_g else "General"
+
+        if "Responsable_Tienda" not in df_sla.columns:
+            df_sla["Responsable_Tienda"] = "Sin Asignar"
+        else:
+            df_sla["Responsable_Tienda"] = df_sla["Responsable_Tienda"].apply(corregir_encoding_texto)
+
+        if "Año" not in df_sla.columns:
+            df_sla["Año"] = 2026
+            
+        if "Mes" not in df_sla.columns:
+            if "Fecha_DT" in df_sla.columns:
+                df_sla["Mes"] = pd.to_datetime(df_sla["Fecha_DT"]).dt.month.fillna(0).astype(int)
+            else:
+                df_sla["Mes"] = 0
+
+        if not df_rect.empty:
+            if "Monto_Rectif" not in df_rect.columns:
+                col_m = None
+                for c in ["Imp.tien.PVP S/IVA mon.BD", "Monto", "Importe"]:
+                    if c in df_rect.columns:
+                        col_m = c
+                        break
+                if col_m:
+                    df_rect["Monto_Rectif"] = pd.to_numeric(df_rect[col_m].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
+                else:
+                    df_rect["Monto_Rectif"] = 0.0
+
+            # Mapear datos faltantes a df_rect desde df_sla
+            if "Tienda" in df_rect.columns and "Tienda" in df_sla.columns:
+                if "Responsable_Tienda" in df_sla.columns:
+                    mapa_resp = df_sla[["Tienda", "Responsable_Tienda"]].drop_duplicates().set_index("Tienda")["Responsable_Tienda"].to_dict()
+                    df_rect["Responsable_Tienda"] = df_rect["Tienda"].map(mapa_resp).fillna("Sin Asignar")
+                if "Almacen" in df_sla.columns and "Almacen" not in df_rect.columns:
+                    mapa_alm = df_sla[["Tienda", "Almacen"]].drop_duplicates().set_index("Tienda")["Almacen"].to_dict()
+                    df_rect["Almacen"] = df_rect["Tienda"].map(mapa_alm).fillna("501")
+                if "Gestion" in df_sla.columns and "Gestion" not in df_rect.columns:
+                    mapa_gest = df_sla[["Tienda", "Gestion"]].drop_duplicates().set_index("Tienda")["Gestion"].to_dict()
+                    df_rect["Gestion"] = df_rect["Tienda"].map(mapa_gest).fillna("General")
 
         return df_sla, df_rect
     return pd.DataFrame(), pd.DataFrame()
@@ -141,7 +174,7 @@ try:
             mes_sel = st.sidebar.multiselect("Mes:", meses, default=meses)
             df_sla = df_sla[df_sla["Mes"].isin(mes_sel) | df_sla["Mes"].isna()]
 
-        # 🚨 FILTRO DE OUTLIERS UBICADO AL FINAL DE LA BARRA LATERAL
+        # 🚨 FILTRO DE OUTLIERS (UBICADO AL FINAL DE LA BARRA LATERAL)
         st.sidebar.markdown("---")
         st.sidebar.header("⚠️ Filtro de Outliers (Pocos Pedidos)")
         
