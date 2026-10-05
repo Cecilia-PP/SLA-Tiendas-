@@ -46,12 +46,16 @@ def cargar_datos_sla():
 
         if "Gestion" not in df_sla.columns:
             col_g = [c for c in df_sla.columns if any(k in c.lower() for k in ["gestion", "gestión", "zona"])]
-            df_sla["Gestion"] = df_sla[col_g[0]].astype(str).str.strip() if col_g else "General"
+            df_sla["Gestion"] = df_sla[col_g[0]].astype(str).str.strip() if col_g else "Sin Clasificar"
+        
+        df_sla["Gestion"] = df_sla["Gestion"].fillna("Sin Clasificar").astype(str).str.strip()
+        df_sla["Gestion"] = df_sla["Gestion"].replace(["-", "--", "", "nan", "None"], "Sin Clasificar")
 
         if "Responsable_Tienda" not in df_sla.columns:
             df_sla["Responsable_Tienda"] = "Sin Asignar"
         else:
             df_sla["Responsable_Tienda"] = df_sla["Responsable_Tienda"].apply(corregir_encoding_texto)
+            df_sla["Responsable_Tienda"] = df_sla["Responsable_Tienda"].replace(["-", "--", "", "nan", "None"], "Sin Asignar")
 
         if "Año" not in df_sla.columns:
             df_sla["Año"] = 2026
@@ -81,9 +85,9 @@ def cargar_datos_sla():
                 if "Almacen" in df_sla.columns and "Almacen" not in df_rect.columns:
                     mapa_alm = df_sla[["Tienda", "Almacen"]].drop_duplicates().set_index("Tienda")["Almacen"].to_dict()
                     df_rect["Almacen"] = df_rect["Tienda"].map(mapa_alm).fillna("501")
-                if "Gestion" in df_sla.columns and "Gestion" not in df_rect.columns:
+                if "Gestion" in df_sla.columns:
                     mapa_gest = df_sla[["Tienda", "Gestion"]].drop_duplicates().set_index("Tienda")["Gestion"].to_dict()
-                    df_rect["Gestion"] = df_rect["Tienda"].map(mapa_gest).fillna("General")
+                    df_rect["Gestion"] = df_rect["Tienda"].map(mapa_gest).fillna("Sin Clasificar")
 
         return df_sla, df_rect
     return pd.DataFrame(), pd.DataFrame()
@@ -101,6 +105,7 @@ try:
             if not df_rect.empty and "Almacen" in df_rect.columns:
                 df_rect = df_rect[df_rect["Almacen"].astype(str).isin(almacen_sel)]
 
+        # FILTRO DE GESTIÓN / ZONA (INCLUYE 'SIN CLASIFICAR')
         if "Gestion" in df_sla.columns and df_sla["Gestion"].notna().any():
             gestiones = sorted([str(x) for x in df_sla["Gestion"].dropna().unique()])
             gestion_sel = st.sidebar.multiselect("Gestión / Zona:", gestiones, default=gestiones)
@@ -230,7 +235,6 @@ try:
             df_alm_mes["Puntaje SLA"] = df_alm_mes["Puntaje SLA"].fillna(0.0)
             df_alm_mes["Etiqueta_Almacen"] = "Almacén " + df_alm_mes["Almacen"].astype(str)
             
-            # ORDEN CRONOLÓGICO STRICTO POR NÚMERO DE MES
             df_alm_mes = df_alm_mes.sort_values(by=["Mes_Num", "Etiqueta_Almacen"]).reset_index(drop=True)
             meses_ordenados = sorted([m for m in df_sla_mes["Mes_Num"].unique() if m in mapa_meses])
             orden_nombres_meses = [mapa_meses[m] for m in meses_ordenados]
@@ -255,12 +259,9 @@ try:
             st.markdown("### 📊 Evolución Mensual de Casuísticas y Cantidad de Líneas Rectificadas")
 
             df_sla_cas_errores = df_sla_mes[df_sla_mes["Casuistica"] != "Pedido Perfecto"].copy()
-            
-            # 1. Agrupar casuísticas asegurando orden numérico
             df_cas_mes = df_sla_cas_errores.groupby(["Mes_Num", "Nombre_Mes", "Casuistica"], as_index=False).agg(Cantidad_Pedidos=("Pedido", "count"))
             df_cas_mes = df_cas_mes.sort_values(by=["Mes_Num"]).reset_index(drop=True)
 
-            # 2. Agrupar líneas rectificadas asegurando orden numérico
             if not df_rect.empty:
                 df_rect_m = df_rect.copy()
                 if "Fecha de Grabación" in df_rect_m.columns:
@@ -279,7 +280,6 @@ try:
             else:
                 df_lineas_mes = pd.DataFrame(columns=["Mes_Num", "Cant_Lineas_Rectificadas"])
 
-            # 3. Mapear meses presentes y ordenar exactamente por Mes_Num (6, 7, 8, 9)
             df_meses_base = pd.DataFrame({"Mes_Num": meses_ordenados})
             df_meses_base["Nombre_Mes"] = df_meses_base["Mes_Num"].map(mapa_meses)
             
@@ -298,7 +298,6 @@ try:
                 "Falta/Sobra", "Faltante Neto", "Faltante UxB", "Etiquetas Cambiadas"
             ]
             
-            # USAR EL NÚMERO DE MES EN EJE X INTERNO PARA EVITAR ZIG-ZAG
             for cas in casuisticas_orden:
                 df_c = df_cas_mes[df_cas_mes["Casuistica"] == cas].sort_values("Mes_Num")
                 if not df_c.empty:
@@ -311,7 +310,6 @@ try:
                         textposition="inside"
                     ), secondary_y=False)
 
-            # LÍNEA CONTINUA GARANTIZADA POR MES_NUM (6, 7, 8, 9)
             fig_comb.add_trace(go.Scatter(
                 x=df_lineas_mes["Mes_Num"], 
                 y=df_lineas_mes["Cant_Lineas_Rectificadas"], 
@@ -323,7 +321,6 @@ try:
                 textposition="top center"
             ), secondary_y=True)
 
-            # REEMPLAZAR NÚMEROS DE MES EN EL EJE X CON SUS NOMBRES CORRESPONDIENTES
             fig_comb.update_layout(
                 barmode="stack", height=420, 
                 paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", 
@@ -725,7 +722,7 @@ try:
                         }
                     )
                 else:
-                    st.success("🎉 La selección actual no presents rectificaciones de artículos.")
+                    st.success("🎉 La selección actual no presenta rectificaciones de artículos.")
 
 except Exception as e:
     st.error(f"Error cargando el tablero: {e}")
