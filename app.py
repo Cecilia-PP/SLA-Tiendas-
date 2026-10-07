@@ -49,13 +49,13 @@ def cargar_datos_sla():
             df_sla["Gestion"] = df_sla[col_g[0]].astype(str).str.strip() if col_g else "Sin Clasificar"
         
         df_sla["Gestion"] = df_sla["Gestion"].fillna("Sin Clasificar").astype(str).str.strip()
-        df_sla["Gestion"] = df_sla["Gestion"].replace(["-", "--", "", "nan", "None"], "Sin Clasificar")
+        df_sla["Gestion"] = df_sla["Gestion"].replace(["-", "--", "- ", "", "nan", "None"], "Sin Clasificar")
 
         if "Responsable_Tienda" not in df_sla.columns:
             df_sla["Responsable_Tienda"] = "Sin Asignar"
         else:
             df_sla["Responsable_Tienda"] = df_sla["Responsable_Tienda"].apply(corregir_encoding_texto)
-            df_sla["Responsable_Tienda"] = df_sla["Responsable_Tienda"].replace(["-", "--", "", "nan", "None"], "Sin Asignar")
+            df_sla["Responsable_Tienda"] = df_sla["Responsable_Tienda"].replace(["-", "--", "- ", "", "nan", "None"], "Sin Asignar")
 
         if "Año" not in df_sla.columns:
             df_sla["Año"] = 2026
@@ -82,12 +82,16 @@ def cargar_datos_sla():
                 if "Responsable_Tienda" in df_sla.columns:
                     mapa_resp = df_sla[["Tienda", "Responsable_Tienda"]].drop_duplicates().set_index("Tienda")["Responsable_Tienda"].to_dict()
                     df_rect["Responsable_Tienda"] = df_rect["Tienda"].map(mapa_resp).fillna("Sin Asignar")
+                    df_rect["Responsable_Tienda"] = df_rect["Responsable_Tienda"].replace(["-", "--", "- ", "", "nan", "None"], "Sin Asignar")
+
                 if "Almacen" in df_sla.columns and "Almacen" not in df_rect.columns:
                     mapa_alm = df_sla[["Tienda", "Almacen"]].drop_duplicates().set_index("Tienda")["Almacen"].to_dict()
                     df_rect["Almacen"] = df_rect["Tienda"].map(mapa_alm).fillna("501")
+
                 if "Gestion" in df_sla.columns:
                     mapa_gest = df_sla[["Tienda", "Gestion"]].drop_duplicates().set_index("Tienda")["Gestion"].to_dict()
                     df_rect["Gestion"] = df_rect["Tienda"].map(mapa_gest).fillna("Sin Clasificar")
+                    df_rect["Gestion"] = df_rect["Gestion"].replace(["-", "--", "- ", "", "nan", "None"], "Sin Clasificar")
 
         return df_sla, df_rect
     return pd.DataFrame(), pd.DataFrame()
@@ -105,7 +109,6 @@ try:
             if not df_rect.empty and "Almacen" in df_rect.columns:
                 df_rect = df_rect[df_rect["Almacen"].astype(str).isin(almacen_sel)]
 
-        # FILTRO DE GESTIÓN / ZONA (INCLUYE 'SIN CLASIFICAR')
         if "Gestion" in df_sla.columns and df_sla["Gestion"].notna().any():
             gestiones = sorted([str(x) for x in df_sla["Gestion"].dropna().unique()])
             gestion_sel = st.sidebar.multiselect("Gestión / Zona:", gestiones, default=gestiones)
@@ -196,10 +199,11 @@ try:
                 df_rect = df_rect[~df_rect["Tienda"].isin(tiendas_pocas_compras)]
             st.sidebar.warning(f"Excluidas {len(tiendas_pocas_compras):,} tiendas con < {umbral_min_pedidos} pedidos.")
 
-        tab1, tab2, tab3 = st.tabs([
+        tab1, tab2, tab3, tab4 = st.tabs([
             "📊 1. Ranking SLA por Almacén y Tienda",
             "📈 2. Casuísticas y Modelo SLA",
-            "🏪 3. Auditoría Práctica por Sucursal"
+            "🏪 3. Auditoría Práctica por Sucursal",
+            "🔄 4. Análisis de Sustituciones"
         ])
 
         # HOJA 1
@@ -337,6 +341,13 @@ try:
             st.markdown("---")
             st.markdown("### 🏪 Detalle por Franquiciado / Supervisor")
 
+            col_tiendas_lbl = "Total\nTiendas"
+            col_totales_lbl = "Pedidos\nTotales"
+            col_rectif_lbl = "Pedidos con\nRectificaciones"
+            col_lin_lbl = "Líneas\nRectificadas"
+            col_part_lin_lbl = "% Líneas\nConfirmadas"
+            col_sla_lbl = "Puntaje SLA\n(1 a 10)"
+
             group_cols_resp = ["Responsable_Tienda"] if "Responsable_Tienda" in df_sla.columns else ["Tienda"]
             tb_resp_base = df_sla.groupby(group_cols_resp, as_index=False).agg(
                 Total_Tiendas=("Tienda", "nunique"), 
@@ -375,13 +386,6 @@ try:
             }])
 
             tb_resp_display = pd.concat([tb_resp_sorted, fila_total_resp], ignore_index=True)
-            
-            col_tiendas_lbl = "Total\nTiendas"
-            col_totales_lbl = "Pedidos\nTotales"
-            col_rectif_lbl = "Pedidos con\nRectificaciones"
-            col_lin_lbl = "Líneas\nRectificadas"
-            col_part_lin_lbl = "% Líneas\nConfirmadas"
-            col_sla_lbl = "Puntaje SLA\n(1 a 10)"
 
             tb_resp_disp_clean = tb_resp_display.rename(columns={
                 "Responsable_Tienda": "Franquiciado / Supervisor",
@@ -420,23 +424,42 @@ try:
             if "Gestion" in df_sla.columns:
                 group_cols_alm.append("Gestion")
 
-            tb_alm_tienda = df_sla.groupby(group_cols_alm, as_index=False).agg(
+            tb_alm_base = df_sla.groupby(group_cols_alm, as_index=False).agg(
                 Pedidos_Totales=("Pedido", "count"),
                 Pedidos_Con_Rectificaciones=("Casuistica", lambda x: (x != "Pedido Perfecto").sum()),
                 Puntos_Obtenidos=("Puntos_Obtenidos", "sum")
             )
 
+            if not df_rect.empty and "Tienda" in df_rect.columns:
+                col_est_alm = "Estado_Clean" if "Estado_Clean" in df_rect.columns else ("Estado" if "Estado" in df_rect.columns else "Pedido")
+                tb_rect_counts_alm = df_rect.groupby("Tienda", as_index=False).agg(
+                    Lineas_Grabadas_Totales=("Pedido", "count"),
+                    Lineas_Confirmadas_M=(col_est_alm, lambda x: (x.astype(str).str.strip().str.upper() == "M").sum() if col_est_alm != "Pedido" else len(x))
+                )
+                tb_alm_tienda = tb_alm_base.merge(tb_rect_counts_alm, on="Tienda", how="left").fillna({"Lineas_Grabadas_Totales": 0, "Lineas_Confirmadas_M": 0})
+            else:
+                tb_alm_tienda = tb_alm_base.copy()
+                tb_alm_tienda["Lineas_Grabadas_Totales"] = 0
+                tb_alm_tienda["Lineas_Confirmadas_M"] = 0
+
             tb_alm_tienda["Puntos_Posibles"] = tb_alm_tienda["Pedidos_Totales"] * 10.0
             tb_alm_tienda["Puntaje SLA"] = (tb_alm_tienda["Puntos_Obtenidos"] / tb_alm_tienda["Puntos_Posibles"]) * 10.0
             tb_alm_tienda["Puntaje SLA"] = tb_alm_tienda["Puntaje SLA"].fillna(0.0)
+            tb_alm_tienda["% Líneas Confirmadas"] = (tb_alm_tienda["Lineas_Confirmadas_M"] / tb_alm_tienda["Lineas_Grabadas_Totales"] * 100.0).fillna(0.0)
 
             tb_alm_tienda_sorted = tb_alm_tienda.sort_values(by="Puntaje SLA", ascending=True).reset_index(drop=True)
+
+            tot_lin_grabadas_alm = tb_alm_tienda["Lineas_Grabadas_Totales"].sum()
+            tot_lin_conf_alm = tb_alm_tienda["Lineas_Confirmadas_M"].sum()
+            pct_lineas_conf_alm_global = (tot_lin_conf_alm / tot_lin_grabadas_alm * 100.0) if tot_lin_grabadas_alm > 0 else 0.0
 
             fila_dict_alm = {
                 "Almacen": "Total General",
                 "Tienda": "—",
                 "Pedidos_Totales": tot_pedidos_global,
                 "Pedidos_Con_Rectificaciones": tot_pedidos_rectif_global,
+                "Lineas_Grabadas_Totales": tot_lin_grabadas_alm,
+                "% Líneas Confirmadas": pct_lineas_conf_alm_global,
                 "Puntaje SLA": sla_global
             }
             if "Gestion" in group_cols_alm:
@@ -449,6 +472,7 @@ try:
             rename_dict_alm = {
                 "Almacen": "Almacén", "Tienda": "Tienda", "Gestion": "Gestión",
                 "Pedidos_Totales": col_totales_lbl, "Pedidos_Con_Rectificaciones": col_rectif_lbl,
+                "Lineas_Grabadas_Totales": col_lin_lbl, "% Líneas Confirmadas": col_part_lin_lbl,
                 "Puntaje SLA": col_sla_lbl
             }
 
@@ -459,7 +483,7 @@ try:
                 cols_order_alm.append("Gestión")
 
             cols_order_alm.extend([
-                col_totales_lbl, col_rectif_lbl, col_sla_lbl
+                col_totales_lbl, col_rectif_lbl, col_lin_lbl, col_part_lin_lbl, col_sla_lbl
             ])
 
             st.dataframe(
@@ -471,6 +495,8 @@ try:
                     "Gestión": st.column_config.Column("Gestión", width="medium"),
                     col_totales_lbl: st.column_config.NumberColumn(col_totales_lbl, format="%d", width="small"),
                     col_rectif_lbl: st.column_config.NumberColumn(col_rectif_lbl, format="%d", width="small"),
+                    col_lin_lbl: st.column_config.NumberColumn(col_lin_lbl, format="%d", width="small"),
+                    col_part_lin_lbl: st.column_config.NumberColumn(col_part_lin_lbl, format="%.2f %%", width="small"),
                     col_sla_lbl: st.column_config.NumberColumn(col_sla_lbl, format="%.2f ⭐", width="small")
                 }
             )
@@ -723,6 +749,162 @@ try:
                     )
                 else:
                     st.success("🎉 La selección actual no presenta rectificaciones de artículos.")
+
+        # HOJA 4: ANÁLISIS EXCLUSIVO DE SUSTITUCIÓN DISTINTA SUBFAMILIA (APAREAMIENTO ÍTEM A ÍTEM POR MONTO)
+        with tab4:
+            st.subheader("🔄 Análisis de Casos: Sustitución Distinta Subfamilia (Faltante > Sobrante)")
+            st.markdown("Auditoría de pedidos clasificados como **'Sustitución Distinta Subfamilia'** donde el producto **FALTANTE** posee un valor monetario **mayor** al producto **SOBRANTE** entregado.")
+
+            df_sust_cas = df_sla[df_sla["Casuistica"] == "Sustitución Distinta Subfamilia"].copy()
+            pedidos_sust_distinta = set(df_sust_cas["Pedido"].dropna().unique())
+
+            if not df_rect.empty and pedidos_sust_distinta:
+                df_r_sust = df_rect[df_rect["Pedido"].isin(pedidos_sust_distinta)].copy()
+                
+                col_motivo_s = "Motivo_Clean" if "Motivo_Clean" in df_r_sust.columns else ("Motivo" if "Motivo" in df_r_sust.columns else None)
+                if col_motivo_s:
+                    df_r_sust["Motivo_Norm"] = df_r_sust[col_motivo_s].astype(str).str.strip().str.upper()
+                else:
+                    df_r_sust["Motivo_Norm"] = "F"
+
+                col_art_lbl = "Artículo" if "Artículo" in df_r_sust.columns else ("SKU" if "SKU" in df_r_sust.columns else "Producto")
+                col_desc_lbl = "Descripción" if "Descripción" in df_r_sust.columns else "Producto"
+
+                filas_comparativas = []
+
+                for ped, grp in df_r_sust.groupby("Pedido"):
+                    f_items = grp[grp["Motivo_Norm"] == "F"].sort_values(by="Monto_Rectif", ascending=False).reset_index(drop=True)
+                    s_items = grp[grp["Motivo_Norm"] == "S"].sort_values(by="Monto_Rectif", ascending=False).reset_index(drop=True)
+
+                    if not f_items.empty and not s_items.empty:
+                        tienda_val = grp["Tienda"].iloc[0] if "Tienda" in grp.columns else "—"
+                        almacen_val = grp["Almacen"].iloc[0] if "Almacen" in grp.columns else "501"
+
+                        max_pairs = max(len(f_items), len(s_items))
+
+                        for i in range(max_pairs):
+                            if i < len(f_items):
+                                row_f = f_items.iloc[i]
+                                sku_f = str(row_f[col_art_lbl])
+                                desc_f = str(row_f[col_desc_lbl]) if col_desc_lbl in row_f else sku_f
+                                monto_f = float(row_f["Monto_Rectif"])
+                            else:
+                                sku_f, desc_f, monto_f = "—", "—", 0.0
+
+                            if i < len(s_items):
+                                row_s = s_items.iloc[i]
+                                sku_s = str(row_s[col_art_lbl])
+                                desc_s = str(row_s[col_desc_lbl]) if col_desc_lbl in row_s else sku_s
+                                monto_s = float(row_s["Monto_Rectif"])
+                            else:
+                                sku_s, desc_s, monto_s = "—", "—", 0.0
+
+                            if monto_f > monto_s:
+                                dif_valor = monto_f - monto_s
+                                filas_comparativas.append({
+                                    "Almacén": almacen_val,
+                                    "Tienda": tienda_val,
+                                    "Pedido": ped,
+                                    "SKU Faltante": sku_f,
+                                    "Producto Faltante": desc_f,
+                                    "Monto Faltante ($)": monto_f,
+                                    "SKU Sobrante": sku_s,
+                                    "Producto Sobrante": desc_s,
+                                    "Monto Sobrante ($)": monto_s,
+                                    "Diferencia Valor ($)": dif_valor
+                                })
+
+                if filas_comparativas:
+                    df_sust_analisis = pd.DataFrame(filas_comparativas)
+
+                    # CONVERSIÓN Y FORMATO LIMPIO PARA EVITAR VALORES EN BLANCO EN EL KPI
+                    tot_pedidos_sust_desf = int(df_sust_analisis["Pedido"].nunique())
+                    tot_perdida_monto = float(df_sust_analisis["Diferencia Valor ($)"].sum())
+
+                    col_m1, col_m2 = st.columns(2)
+                    col_m1.metric("🚨 Pedidos Sustitución Distinta Subfamilia (Desfavorable)", f"{tot_pedidos_sust_desf:,}")
+                    col_m2.metric("💸 Pérdida de Valor Total ($)", f"".replace(",", "X").replace(".", ",").replace("X", "."))
+
+                    st.markdown("---")
+                    st.markdown("### 🏆 Top 10 de Tiendas con Mayor Cantidad de Pedidos Afectados")
+
+                    # TABLA TOP 10 TIENDAS CON DIFERENCIA DE VALOR TOTAL ACUMULADO
+                    tb_top10_tiendas = df_sust_analisis.groupby("Tienda", as_index=False).agg(
+                        Pedidos_Afectados=("Pedido", "nunique"),
+                        Diferencia_Total_Pérdida=("Diferencia Valor ($)", "sum")
+                    ).sort_values(by="Diferencia_Total_Pérdida", ascending=False).head(10).reset_index(drop=True)
+
+                    tb_top10_tiendas = tb_top10_tiendas.rename(columns={
+                        "Tienda": "Tienda",
+                        "Pedidos_Afectados": "Pedidos Afectados",
+                        "Diferencia_Total_Pérdida": "Diferencia Valor ($)"
+                    })
+
+                    st.dataframe(
+                        tb_top10_tiendas[["Tienda", "Pedidos Afectados", "Diferencia Valor ($)"]],
+                        hide_index=True,
+                        column_config={
+                            "Tienda": st.column_config.Column("Tienda", width="medium"),
+                            "Pedidos Afectados": st.column_config.NumberColumn("Pedidos Afectados", format="%d", width="medium"),
+                            "Diferencia Valor ($)": st.column_config.NumberColumn("Diferencia Valor ($)", format="$%.2f", width="large")
+                        }
+                    )
+
+                    st.markdown("---")
+                    
+                    tiendas_sust_opciones = sorted([str(x) for x in df_sust_analisis["Tienda"].dropna().unique() if str(x) != "nan"])
+                    opciones_tienda_sust = ["Ninguna", "Todas las Tiendas"] + tiendas_sust_opciones
+                    
+                    t_sust_sel = st.selectbox("Seleccionar Tienda a Auditar:", opciones_tienda_sust, index=0)
+
+                    st.markdown("### 📋 Detalle Individual por Tienda, Pedido y Artículos de Sustitución")
+
+                    if t_sust_sel == "Ninguna":
+                        st.info("👈 Selecciona una **Tienda** específica o la opción **'Todas las Tiendas'** para desplegar el detalle individual de artículos.")
+                    else:
+                        if t_sust_sel == "Todas las Tiendas":
+                            df_sust_analisis_filtrada = df_sust_analisis.copy()
+                        else:
+                            df_sust_analisis_filtrada = df_sust_analisis[df_sust_analisis["Tienda"].astype(str) == str(t_sust_sel)].copy()
+
+                        busqueda_pedido_sust = st.text_input("🔍 Filtrar exclusivamente por Número de Pedido (Pestaña Sustituciones):", "")
+                        if busqueda_pedido_sust:
+                            df_sust_analisis_filtrada = df_sust_analisis_filtrada[
+                                df_sust_analisis_filtrada["Pedido"].astype(str).str.contains(busqueda_pedido_sust.strip(), case=False, na=False)
+                            ]
+
+                        if not df_sust_analisis_filtrada.empty:
+                            cols_detalle_sust = [
+                                "Almacén", "Tienda", "Pedido", 
+                                "SKU Faltante", "Producto Faltante", "Monto Faltante ($)", 
+                                "SKU Sobrante", "Producto Sobrante", "Monto Sobrante ($)", 
+                                "Diferencia Valor ($)"
+                            ]
+
+                            df_sust_analisis_sorted = df_sust_analisis_filtrada[cols_detalle_sust].sort_values(by="Diferencia Valor ($)", ascending=False).reset_index(drop=True)
+
+                            st.dataframe(
+                                df_sust_analisis_sorted,
+                                hide_index=True,
+                                column_config={
+                                    "Almacén": st.column_config.Column("Almacén", width="small"),
+                                    "Tienda": st.column_config.Column("Tienda", width="small"),
+                                    "Pedido": st.column_config.Column("Pedido", width="medium"),
+                                    "SKU Faltante": st.column_config.Column("SKU Falta", width="small"),
+                                    "Producto Faltante": st.column_config.Column("Producto Faltante", width="large"),
+                                    "Monto Faltante ($)": st.column_config.NumberColumn("Monto Falta ($)", format="$%.2f", width="medium"),
+                                    "SKU Sobrante": st.column_config.Column("SKU Sobra", width="small"),
+                                    "Producto Sobrante": st.column_config.Column("Producto Sobrante", width="large"),
+                                    "Monto Sobrante ($)": st.column_config.NumberColumn("Monto Sobra ($)", format="$%.2f", width="medium"),
+                                    "Diferencia Valor ($)": st.column_config.NumberColumn("Diferencia Valor ($)", format="$%.2f", width="medium")
+                                }
+                            )
+                        else:
+                            st.info("ℹ️ No hay pedidos registrados para la tienda o criterio de búsqueda seleccionado.")
+                else:
+                    st.success("🎉 No se registraron pedidos de 'Sustitución Distinta Subfamilia' donde el artículo faltante sea de mayor valor al sobrante.")
+            else:
+                st.info("ℹ️ No existen pedidos de 'Sustitución Distinta Subfamilia' para la selección actual de filtros.")
 
 except Exception as e:
     st.error(f"Error cargando el tablero: {e}")
