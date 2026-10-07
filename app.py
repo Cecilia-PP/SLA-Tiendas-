@@ -750,16 +750,20 @@ try:
                 else:
                     st.success("🎉 La selección actual no presenta rectificaciones de artículos.")
 
-        # HOJA 4: ANÁLISIS EXCLUSIVO DE SUSTITUCIÓN DISTINTA SUBFAMILIA (APAREAMIENTO ÍTEM A ÍTEM POR MONTO)
+        # HOJA 4: ANÁLISIS EXCLUSIVO DE SUSTITUCIÓN DISTINTA SUBFAMILIA (REPOSITORIO DE RECTIFICACIONES GRABADAS EN TIENDA 'T')
         with tab4:
             st.subheader("🔄 Análisis de Casos: Sustitución Distinta Subfamilia (Faltante > Sobrante)")
-            st.markdown("Auditoría de pedidos clasificados como **'Sustitución Distinta Subfamilia'** donde el producto **FALTANTE** posee un valor monetario **mayor** al producto **SOBRANTE** entregado.")
+            st.markdown("Auditoría de pedidos clasificados como **'Sustitución Distinta Subfamilia'** detectados y grabados por la **Tienda (Procedencia 'T')** donde el producto **FALTANTE** posee un valor monetario **mayor** al producto **SOBRANTE** entregado.")
 
             df_sust_cas = df_sla[df_sla["Casuistica"] == "Sustitución Distinta Subfamilia"].copy()
             pedidos_sust_distinta = set(df_sust_cas["Pedido"].dropna().unique())
 
             if not df_rect.empty and pedidos_sust_distinta:
-                df_r_sust = df_rect[df_rect["Pedido"].isin(pedidos_sust_distinta)].copy()
+                # FILTRAR EXCLUSIVAMENTE RECTIFICACIONES GRABADAS POR LA TIENDA (Procedencia == 'T')
+                df_r_sust = df_rect[
+                    (df_rect["Pedido"].isin(pedidos_sust_distinta)) & 
+                    (df_rect["Procedencia"].astype(str).str.strip().str.upper() == "T")
+                ].copy()
                 
                 col_motivo_s = "Motivo_Clean" if "Motivo_Clean" in df_r_sust.columns else ("Motivo" if "Motivo" in df_r_sust.columns else None)
                 if col_motivo_s:
@@ -817,18 +821,16 @@ try:
                 if filas_comparativas:
                     df_sust_analisis = pd.DataFrame(filas_comparativas)
 
-                    # CONVERSIÓN Y FORMATO LIMPIO PARA EVITAR VALORES EN BLANCO EN EL KPI
                     tot_pedidos_sust_desf = int(df_sust_analisis["Pedido"].nunique())
                     tot_perdida_monto = float(df_sust_analisis["Diferencia Valor ($)"].sum())
 
                     col_m1, col_m2 = st.columns(2)
-                    col_m1.metric("🚨 Pedidos Sustitución Distinta Subfamilia (Desfavorable)", f"{tot_pedidos_sust_desf:,}")
+                    col_m1.metric("🚨 Pedidos Sustitución Distinta Subfamilia (Desfavorable en Tienda)", f"{tot_pedidos_sust_desf:,}")
                     col_m2.metric("💸 Pérdida de Valor Total ($)", f"".replace(",", "X").replace(".", ",").replace("X", "."))
 
                     st.markdown("---")
                     st.markdown("### 🏆 Top 10 de Tiendas con Mayor Cantidad de Pedidos Afectados")
 
-                    # TABLA TOP 10 TIENDAS CON DIFERENCIA DE VALOR TOTAL ACUMULADO
                     tb_top10_tiendas = df_sust_analisis.groupby("Tienda", as_index=False).agg(
                         Pedidos_Afectados=("Pedido", "nunique"),
                         Diferencia_Total_Pérdida=("Diferencia Valor ($)", "sum")
@@ -857,6 +859,42 @@ try:
                     
                     t_sust_sel = st.selectbox("Seleccionar Tienda a Auditar:", opciones_tienda_sust, index=0)
 
+                    st.markdown("### 📦 Pedidos con Mayor Diferencia Total de Pérdida")
+
+                    df_pedidos_top_perdida = df_sust_analisis.groupby(["Almacén", "Tienda", "Pedido"], as_index=False).agg(
+                        Monto_Falta_Total=("Monto Faltante ($)", "sum"),
+                        Monto_Sobra_Total=("Monto Sobrante ($)", "sum"),
+                        Diferencia_Total_Pérdida=("Diferencia Valor ($)", "sum")
+                    )
+
+                    if t_sust_sel != "Ninguna" and t_sust_sel != "Todas las Tiendas":
+                        df_pedidos_top_perdida = df_pedidos_top_perdida[df_pedidos_top_perdida["Tienda"].astype(str) == str(t_sust_sel)]
+
+                    df_pedidos_top_perdida = df_pedidos_top_perdida.sort_values(by="Diferencia_Total_Pérdida", ascending=False).reset_index(drop=True)
+
+                    df_pedidos_top_perdida_disp = df_pedidos_top_perdida.rename(columns={
+                        "Almacén": "Almacén",
+                        "Tienda": "Tienda",
+                        "Pedido": "Pedido",
+                        "Monto_Falta_Total": "Monto Falta ($)",
+                        "Monto_Sobra_Total": "Monto Sobra ($)",
+                        "Diferencia_Total_Pérdida": "Diferencia Total Pérdida ($)"
+                    })
+
+                    st.dataframe(
+                        df_pedidos_top_perdida_disp[["Almacén", "Tienda", "Pedido", "Monto Falta ($)", "Monto Sobra ($)", "Diferencia Total Pérdida ($)"]],
+                        hide_index=True,
+                        column_config={
+                            "Almacén": st.column_config.Column("Almacén", width="small"),
+                            "Tienda": st.column_config.Column("Tienda", width="small"),
+                            "Pedido": st.column_config.Column("Pedido", width="medium"),
+                            "Monto Falta ($)": st.column_config.NumberColumn("Monto Falta ($)", format="$%.2f", width="medium"),
+                            "Monto Sobra ($)": st.column_config.NumberColumn("Monto Sobra ($)", format="$%.2f", width="medium"),
+                            "Diferencia Total Pérdida ($)": st.column_config.NumberColumn("Diferencia Total Pérdida ($)", format="$%.2f", width="large")
+                        }
+                    )
+
+                    st.markdown("---")
                     st.markdown("### 📋 Detalle Individual por Tienda, Pedido y Artículos de Sustitución")
 
                     if t_sust_sel == "Ninguna":
@@ -902,7 +940,7 @@ try:
                         else:
                             st.info("ℹ️ No hay pedidos registrados para la tienda o criterio de búsqueda seleccionado.")
                 else:
-                    st.success("🎉 No se registraron pedidos de 'Sustitución Distinta Subfamilia' donde el artículo faltante sea de mayor valor al sobrante.")
+                    st.success("🎉 No se registraron pedidos en Tienda ('T') de 'Sustitución Distinta Subfamilia' donde el artículo faltante sea de mayor valor al sobrante.")
             else:
                 st.info("ℹ️ No existen pedidos de 'Sustitución Distinta Subfamilia' para la selección actual de filtros.")
 
