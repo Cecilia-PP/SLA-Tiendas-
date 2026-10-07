@@ -3,10 +3,9 @@ import glob
 import os
 
 print("==================================================================")
-print("🚀 REPROCESANDO BASE DATO A DATO CON LIMPIEZA DE GUIÓN ('-') EN GESTIÓN")
+print("🚀 PROCESANDO MAPEOS Y REEMPLAZANDO 'SUCURSAL' POR 'TIENDA'")
 print("==================================================================")
 
-# 1. Cargar Mapas desde ZONA DE SUPERVISION
 path_zona = glob.glob("Datos_mensuales/*[Zz]ona*.csv") + glob.glob("*[Zz]ona*.csv")
 mapa_supervisores = {}
 mapa_gestion = {}
@@ -23,14 +22,12 @@ if path_zona:
         
         col_t = [c for c in df_zona.columns if "TIENDA" in c][0]
         
-        # Buscar columna Responsable / Supervisor
         col_resp_exacta = None
         for c in df_zona.columns:
             if any(k in c for k in ["RESPONSABLE TIENDA / SOCIO ESTRATEGICO", "RESPONSABLE TIENDA", "SOCIO ESTRATEGICO", "SUPERVISOR"]):
                 col_resp_exacta = c
                 break
 
-        # Buscar columna Gestión
         col_gest_exacta = [c for c in df_zona.columns if "GESTION" in c or "GESTIÓN" in c]
         col_g = col_gest_exacta[0] if col_gest_exacta else None
                 
@@ -42,22 +39,41 @@ if path_zona:
                 df_zona_clean[col_resp_exacta] = df_zona_clean[col_resp_exacta].astype(str).str.strip()
                 df_zona_clean[col_resp_exacta] = df_zona_clean[col_resp_exacta].replace(["-", "--", "- ", "", "nan", "None"], "Sin Asignar")
                 mapa_supervisores = df_zona_clean.set_index(col_t)[col_resp_exacta].to_dict()
-                print(f"   ✅ Mapeo de Supervisores: {len(mapa_supervisores)} tiendas vinculadas.")
             
             if col_g:
-                # REEMPLAZO DIRECTO DE CUALQUIER GUIÓN POR 'Sin Clasificar'
                 df_zona_clean[col_g] = df_zona_clean[col_g].astype(str).str.strip()
                 df_zona_clean[col_g] = df_zona_clean[col_g].replace(["-", "--", "- ", "", "nan", "None"], "Sin Clasificar")
                 mapa_gestion = df_zona_clean.set_index(col_t)[col_g].to_dict()
-                print(f"   ✅ Mapeo de Gestión: {len(mapa_gestion)} tiendas vinculadas (incluyendo 'Sin Clasificar').")
     except Exception as e:
         print(f"   ⚠️ Warning cargando supervisores/gestión: {e}")
 
-# 2. Cargar BDMVTAL (Base Consolidada de Pedidos)
+# MAPEO DE ÁREA DE SALIDA POR PEDIDO
+mapa_area_salida = {}
+path_area_salida = glob.glob("Datos_mensuales/*[Aa]rea*[Ss]alida*.csv") + glob.glob("Datos_mensuales/*[Áá]rea*[Ss]alida*.csv") + glob.glob("*[Aa]rea*[Ss]alida*.csv")
+
+if path_area_salida:
+    print(f"📌 Leyendo archivo de Área de Salida: {path_area_salida[0]}")
+    try:
+        try:
+            df_area = pd.read_csv(path_area_salida[0], sep=";", encoding="latin1", dtype=str, on_bad_lines="skip")
+        except Exception:
+            df_area = pd.read_csv(path_area_salida[0], sep=None, engine="python", encoding="latin1", dtype=str, on_bad_lines="skip")
+
+        df_area.columns = df_area.columns.str.strip().str.upper()
+        
+        col_ped_area = [c for c in df_area.columns if any(k in c for k in ["PEDIDO", "Nº DE PEDIDO", "Nº PEDIDO", "NRO_PEDIDO"])][0]
+        col_val_area = [c for c in df_area.columns if any(k in c for k in ["AREA", "ÁREA", "SALIDA", "DESCRIPCION", "SECTOR"])][0]
+
+        if col_ped_area and col_val_area:
+            df_area[col_ped_area] = df_area[col_ped_area].astype(str).str.strip()
+            df_area[col_val_area] = df_area[col_val_area].astype(str).str.strip()
+            df_area_clean = df_area.dropna(subset=[col_ped_area]).drop_duplicates(subset=[col_ped_area]).copy()
+            mapa_area_salida = df_area_clean.set_index(col_ped_area)[col_val_area].to_dict()
+    except Exception as e:
+        print(f"   ⚠️ Warning cargando Área de Salida: {e}")
+
 archivos_bd = glob.glob("Datos_mensuales/BDMVTAL*.csv") + glob.glob("BDMVTAL*.csv")
 list_bd = []
-
-print(f"\n📦 Buscando archivos de Pedidos Totales (BDMVTAL)... Encontrados: {len(archivos_bd)}")
 
 for f in archivos_bd:
     try:
@@ -68,7 +84,6 @@ for f in archivos_bd:
 
         df_temp.columns = df_temp.columns.str.strip()
         list_bd.append(df_temp)
-        print(f"   └─ Cargado correctamente: {f} ({len(df_temp):,} filas)")
     except Exception as e:
         print(f"   ⚠️ Error cargando {f}: {e}")
 
@@ -76,33 +91,33 @@ if list_bd:
     df_sla = pd.concat(list_bd, ignore_index=True)
     df_sla.columns = df_sla.columns.str.strip()
     
-    # Estandarizar Pedido
     col_ped = [c for c in df_sla.columns if c.lower() in ["nº de pedido", "pedido", "nº pedido", "nro_pedido", "num_pedido"]]
     df_sla["Pedido"] = df_sla[col_ped[0]].astype(str).str.strip() if col_ped else df_sla.iloc[:, 0].astype(str).str.strip()
 
-    # Estandarizar Tienda
     col_tien = [c for c in df_sla.columns if any(k in c.lower() for k in ["cod. suc. des", "tienda", "sucursal", "cod_suc_des", "suc_des"])]
     df_sla["Tienda"] = df_sla[col_tien[0]].astype(str).str.strip().str.lstrip("0") if col_tien else "Sin Tienda"
 
-    # Estandarizar Almacén
     col_alm = [c for c in df_sla.columns if any(k in c.lower() for k in ["cod. almacen", "almacen", "almacén", "cod_almacen", "cd", "suc_ori"])]
     df_sla["Almacen"] = df_sla[col_alm[0]].astype(str).str.strip() if col_alm else "501"
 
-    # ASIGNAR GESTIÓN Y LIMPIAR GUIONES
     if mapa_gestion:
         df_sla["Gestion"] = df_sla["Tienda"].map(mapa_gestion).fillna("Sin Clasificar")
     else:
         df_sla["Gestion"] = "Sin Clasificar"
     df_sla["Gestion"] = df_sla["Gestion"].astype(str).str.strip().replace(["-", "--", "- ", "", "nan", "None"], "Sin Clasificar")
 
-    # ASIGNAR RESPONSABLE Y LIMPIAR GUIONES
     if mapa_supervisores:
         df_sla["Responsable_Tienda"] = df_sla["Tienda"].map(mapa_supervisores).fillna("Sin Asignar")
     else:
         df_sla["Responsable_Tienda"] = "Sin Asignar"
     df_sla["Responsable_Tienda"] = df_sla["Responsable_Tienda"].astype(str).str.strip().replace(["-", "--", "- ", "", "nan", "None"], "Sin Asignar")
 
-    # Procesar Fecha, Año y Mes
+    if mapa_area_salida:
+        df_sla["Area_Salida"] = df_sla["Pedido"].map(mapa_area_salida).fillna("Sin Clasificar")
+    else:
+        df_sla["Area_Salida"] = "Sin Clasificar"
+    df_sla["Area_Salida"] = df_sla["Area_Salida"].astype(str).str.strip().replace(["-", "--", "- ", "", "nan", "None"], "Sin Clasificar")
+
     col_fec = [c for c in df_sla.columns if any(k in c.lower() for k in ["fecha servido", "fecha_servido", "fecha de grabación", "fecha"])]
     if col_fec:
         fec_str = df_sla[col_fec[0]].astype(str).str.strip()
@@ -119,16 +134,11 @@ if list_bd:
         df_sla["Mes"] = 0
 
     df_sla = df_sla.drop_duplicates(subset=["Pedido"], keep="first")
-    print(f"   📊 Universo total consolidado: {len(df_sla):,} pedidos únicos.")
-else:
-    df_sla = pd.DataFrame(columns=["Pedido", "Tienda", "Almacen", "Gestion", "Responsable_Tienda", "Año", "Mes"])
 
-# 3. Cargar Maestro de Artículos
 path_maestro_csv = glob.glob("Datos_mensuales/*[Mm]aestro*.csv") + glob.glob("*[Mm]aestro*.csv")
 df_maestro = pd.DataFrame()
 
 if path_maestro_csv:
-    print(f"\n🏷️ Cargando Maestro de Artículos: {path_maestro_csv[0]}")
     try:
         df_maestro = pd.read_csv(path_maestro_csv[0], sep=";", encoding="latin1", dtype=str, on_bad_lines="skip")
         df_maestro.columns = df_maestro.columns.str.strip()
@@ -148,11 +158,8 @@ if path_maestro_csv:
     except Exception as e:
         print(f"   ⚠️ Error cargando Maestro: {e}")
 
-# 4. Cargar y Consolidar Rectificaciones (Líneas Afectadas)
 archivos_rect = glob.glob("Datos_mensuales/*[Rr]ectif*.csv") + glob.glob("*[Rr]ectif*.csv")
 list_rect = []
-
-print(f"\n📉 Buscando archivos de Rectificaciones... Encontrados: {len(archivos_rect)}")
 
 for f in archivos_rect:
     try:
@@ -163,13 +170,19 @@ for f in archivos_rect:
 
         df_t.columns = df_t.columns.str.strip()
         list_rect.append(df_t)
-        print(f"   └─ Cargado rectificaciones: {f} ({len(df_t):,} líneas)")
     except Exception as e:
-        print(f"   ⚠️️ Error cargando {f}: {e}")
+        print(f"   ⚠️ Error cargando {f}: {e}")
 
 if list_rect:
     df_rect_all = pd.concat(list_rect, ignore_index=True)
     df_rect_all.columns = df_rect_all.columns.str.strip()
+
+    col_ped_rect = [c for c in df_rect_all.columns if c.lower() in ["nº de pedido", "pedido", "nº pedido", "nro_pedido", "num_pedido"]]
+    if col_ped_rect:
+        df_rect_all["Pedido"] = df_rect_all[col_ped_rect[0]].astype(str).str.strip()
+        if mapa_area_salida:
+            df_rect_all["Area_Salida"] = df_rect_all["Pedido"].map(mapa_area_salida).fillna("Sin Clasificar")
+            df_rect_all["Area_Salida"] = df_rect_all["Area_Salida"].astype(str).str.strip().replace(["-", "--", "- ", "", "nan", "None"], "Sin Clasificar")
 
     col_art_rect = "Artículo" if "Artículo" in df_rect_all.columns else "SKU"
     col_art_mae = "Artículo" if "Artículo" in df_maestro.columns else ("SKU" if "SKU" in df_maestro.columns else None)
@@ -198,7 +211,6 @@ if list_rect:
     df_rect_all["Subfamilia"] = df_rect_all.get("Subfamilia", pd.Series()).fillna("Sin Subfamilia")
     df_rect_all["Es_Master"] = df_rect_all.get("Es_Master", pd.Series()).fillna("No")
 
-    # Mapear Tienda, Responsable y Gestión
     col_tien_r = [c for c in df_rect_all.columns if any(k in c.lower() for k in ["tienda", "sucursal", "cod_suc_des"])]
     if col_tien_r:
         df_rect_all["Tienda"] = df_rect_all[col_tien_r[0]].astype(str).str.strip().str.lstrip("0")
@@ -226,12 +238,10 @@ if list_rect:
     df_rect_all = df_rect_all.drop_duplicates(subset=cols_exist, keep="first")
 
     df_rect_all.to_parquet("Tablero_Rectificaciones_Detalle.parquet", index=False)
-    print(f"   💾 Guardado 'Tablero_Rectificaciones_Detalle.parquet' ({len(df_rect_all):,} líneas totales).")
 
     col_motivo = "Motivo_Clean" if "Motivo_Clean" in df_rect_all.columns else "Motivo"
     df_rect_all["Motivo_Norm"] = df_rect_all[col_motivo].astype(str).str.strip().str.upper()
 
-    # 5. Clasificación de Casuísticas SLA por Pedido
     pedidos_clasif = []
 
     for ped, group in df_rect_all.groupby("Pedido"):
@@ -288,8 +298,5 @@ if list_rect:
         df_sla["Casuistica"] = df_sla["Casuistica"].fillna("Pedido Perfecto")
         df_sla["Puntos_Obtenidos"] = df_sla["Puntos_Obtenidos"].fillna(10.0)
         df_sla.to_parquet("Tablero_SLA_Pedidos.parquet", index=False)
-        print("   💾 Guardado 'Tablero_SLA_Pedidos.parquet' correctamente.")
 
-print("\n==================================================================")
-print("✨ CONSOLIDACIÓN EXITOSA: REEMPLAZADOS LOS GUIONES '-' POR 'Sin Clasificar'")
-print("==================================================================")
+print("✨ PROCESAMIENTO COMPLETADO.")
