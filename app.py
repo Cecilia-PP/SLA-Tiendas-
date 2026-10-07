@@ -750,7 +750,7 @@ try:
                 else:
                     st.success("🎉 La selección actual no presenta rectificaciones de artículos.")
 
-        # HOJA 4: ANÁLISIS EXCLUSIVO DE SUSTITUCIÓN DISTINTA SUBFAMILIA (REPOSITORIO DE RECTIFICACIONES GRABADAS EN TIENDA 'T')
+        # HOJA 4: ANÁLISIS EXCLUSIVO DE SUSTITUCIÓN DISTINTA SUBFAMILIA
         with tab4:
             st.subheader("🔄 Análisis de Casos: Sustitución Distinta Subfamilia (Faltante > Sobrante)")
             st.markdown("Auditoría de pedidos clasificados como **'Sustitución Distinta Subfamilia'** detectados y grabados por la **Tienda (Procedencia 'T')** donde el producto **FALTANTE** posee un valor monetario **mayor** al producto **SOBRANTE** entregado.")
@@ -759,7 +759,6 @@ try:
             pedidos_sust_distinta = set(df_sust_cas["Pedido"].dropna().unique())
 
             if not df_rect.empty and pedidos_sust_distinta:
-                # FILTRAR EXCLUSIVAMENTE RECTIFICACIONES GRABADAS POR LA TIENDA (Procedencia == 'T')
                 df_r_sust = df_rect[
                     (df_rect["Pedido"].isin(pedidos_sust_distinta)) & 
                     (df_rect["Procedencia"].astype(str).str.strip().str.upper() == "T")
@@ -770,6 +769,12 @@ try:
                     df_r_sust["Motivo_Norm"] = df_r_sust[col_motivo_s].astype(str).str.strip().str.upper()
                 else:
                     df_r_sust["Motivo_Norm"] = "F"
+
+                col_est_s = "Estado_Clean" if "Estado_Clean" in df_r_sust.columns else ("Estado" if "Estado" in df_r_sust.columns else None)
+                if col_est_s:
+                    df_r_sust["Estado_Norm"] = df_r_sust[col_est_s].astype(str).str.strip().str.upper()
+                else:
+                    df_r_sust["Estado_Norm"] = "M"
 
                 col_art_lbl = "Artículo" if "Artículo" in df_r_sust.columns else ("SKU" if "SKU" in df_r_sust.columns else "Producto")
                 col_desc_lbl = "Descripción" if "Descripción" in df_r_sust.columns else "Producto"
@@ -792,19 +797,27 @@ try:
                                 sku_f = str(row_f[col_art_lbl])
                                 desc_f = str(row_f[col_desc_lbl]) if col_desc_lbl in row_f else sku_f
                                 monto_f = float(row_f["Monto_Rectif"])
+                                est_f = str(row_f["Estado_Norm"])
                             else:
-                                sku_f, desc_f, monto_f = "—", "—", 0.0
+                                sku_f, desc_f, monto_f, est_f = "—", "—", 0.0, "—"
 
                             if i < len(s_items):
                                 row_s = s_items.iloc[i]
                                 sku_s = str(row_s[col_art_lbl])
                                 desc_s = str(row_s[col_desc_lbl]) if col_desc_lbl in row_s else sku_s
                                 monto_s = float(row_s["Monto_Rectif"])
+                                est_s = str(row_s["Estado_Norm"])
                             else:
-                                sku_s, desc_s, monto_s = "—", "—", 0.0
+                                sku_s, desc_s, monto_s, est_s = "—", "—", 0.0, "—"
 
                             if monto_f > monto_s:
                                 dif_valor = monto_f - monto_s
+                                
+                                # CALCULAR MONTOS SEGÚN ESTADO DE LA RECTIFICACIÓN
+                                monto_conf = (monto_f if est_f == "M" else 0.0) - (monto_s if est_s == "M" else 0.0)
+                                monto_pend = (monto_f if est_f == "P" else 0.0) - (monto_s if est_s == "P" else 0.0)
+                                monto_rech = (monto_f if est_f == "R" else 0.0) - (monto_s if est_s == "R" else 0.0)
+
                                 filas_comparativas.append({
                                     "Almacén": almacen_val,
                                     "Tienda": tienda_val,
@@ -815,7 +828,10 @@ try:
                                     "SKU Sobrante": sku_s,
                                     "Producto Sobrante": desc_s,
                                     "Monto Sobrante ($)": monto_s,
-                                    "Diferencia Valor ($)": dif_valor
+                                    "Diferencia Valor ($)": dif_valor,
+                                    "Monto Confirmado ($)": max(0.0, monto_conf),
+                                    "Monto Pendiente ($)": max(0.0, monto_pend),
+                                    "Monto Rechazado ($)": max(0.0, monto_rech)
                                 })
 
                 if filas_comparativas:
@@ -861,9 +877,13 @@ try:
 
                     st.markdown("### 📦 Pedidos con Mayor Diferencia Total de Pérdida")
 
+                    # RESUMEN POR PEDIDO INCLUYENDO MONTO CONFIRMADO, PENDIENTE Y RECHAZADO
                     df_pedidos_top_perdida = df_sust_analisis.groupby(["Almacén", "Tienda", "Pedido"], as_index=False).agg(
                         Monto_Falta_Total=("Monto Faltante ($)", "sum"),
                         Monto_Sobra_Total=("Monto Sobrante ($)", "sum"),
+                        Monto_Confirmado=("Monto Confirmado ($)", "sum"),
+                        Monto_Pendiente=("Monto Pendiente ($)", "sum"),
+                        Monto_Rechazado=("Monto Rechazado ($)", "sum"),
                         Diferencia_Total_Pérdida=("Diferencia Valor ($)", "sum")
                     )
 
@@ -878,11 +898,21 @@ try:
                         "Pedido": "Pedido",
                         "Monto_Falta_Total": "Monto Falta ($)",
                         "Monto_Sobra_Total": "Monto Sobra ($)",
+                        "Monto_Confirmado": "Monto Confirmado ($)",
+                        "Monto_Pendiente": "Monto Pendiente ($)",
+                        "Monto_Rechazado": "Monto Rechazado ($)",
                         "Diferencia_Total_Pérdida": "Diferencia Total Pérdida ($)"
                     })
 
+                    cols_ped_top = [
+                        "Almacén", "Tienda", "Pedido", 
+                        "Monto Falta ($)", "Monto Sobra ($)", 
+                        "Monto Confirmado ($)", "Monto Pendiente ($)", "Monto Rechazado ($)", 
+                        "Diferencia Total Pérdida ($)"
+                    ]
+
                     st.dataframe(
-                        df_pedidos_top_perdida_disp[["Almacén", "Tienda", "Pedido", "Monto Falta ($)", "Monto Sobra ($)", "Diferencia Total Pérdida ($)"]],
+                        df_pedidos_top_perdida_disp[cols_ped_top],
                         hide_index=True,
                         column_config={
                             "Almacén": st.column_config.Column("Almacén", width="small"),
@@ -890,6 +920,9 @@ try:
                             "Pedido": st.column_config.Column("Pedido", width="medium"),
                             "Monto Falta ($)": st.column_config.NumberColumn("Monto Falta ($)", format="$%.2f", width="medium"),
                             "Monto Sobra ($)": st.column_config.NumberColumn("Monto Sobra ($)", format="$%.2f", width="medium"),
+                            "Monto Confirmado ($)": st.column_config.NumberColumn("Monto Confirmado ($)", format="$%.2f", width="medium"),
+                            "Monto Pendiente ($)": st.column_config.NumberColumn("Monto Pendiente ($)", format="$%.2f", width="medium"),
+                            "Monto Rechazado ($)": st.column_config.NumberColumn("Monto Rechazado ($)", format="$%.2f", width="medium"),
                             "Diferencia Total Pérdida ($)": st.column_config.NumberColumn("Diferencia Total Pérdida ($)", format="$%.2f", width="large")
                         }
                     )
@@ -916,6 +949,7 @@ try:
                                 "Almacén", "Tienda", "Pedido", 
                                 "SKU Faltante", "Producto Faltante", "Monto Faltante ($)", 
                                 "SKU Sobrante", "Producto Sobrante", "Monto Sobrante ($)", 
+                                "Monto Confirmado ($)", "Monto Pendiente ($)", "Monto Rechazado ($)",
                                 "Diferencia Valor ($)"
                             ]
 
@@ -934,6 +968,9 @@ try:
                                     "SKU Sobrante": st.column_config.Column("SKU Sobra", width="small"),
                                     "Producto Sobrante": st.column_config.Column("Producto Sobrante", width="large"),
                                     "Monto Sobrante ($)": st.column_config.NumberColumn("Monto Sobra ($)", format="$%.2f", width="medium"),
+                                    "Monto Confirmado ($)": st.column_config.NumberColumn("Confirmado ($)", format="$%.2f", width="medium"),
+                                    "Monto Pendiente ($)": st.column_config.NumberColumn("Pendiente ($)", format="$%.2f", width="medium"),
+                                    "Monto Rechazado ($)": st.column_config.NumberColumn("Rechazado ($)", format="$%.2f", width="medium"),
                                     "Diferencia Valor ($)": st.column_config.NumberColumn("Diferencia Valor ($)", format="$%.2f", width="medium")
                                 }
                             )
