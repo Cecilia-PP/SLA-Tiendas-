@@ -14,7 +14,7 @@ PATH_PARQUET_RECT = os.path.join(DIR_BASE, "Tablero_Rectificaciones_Detalle.parq
 PATH_PARQUET_SLA = os.path.join(DIR_BASE, "Tablero_SLA_Pedidos.parquet")
 
 print("==================================================================")
-print("🚀 EJECUTANDO ETL, PURGA DE AUTOMÁTICAS Y ACTUALIZACIÓN DE PARQUET")
+print("🚀 EJECUTANDO ETL, PURGA Y CORRECCIÓN DE ÁREA 13 EN ALMACÉN 514")
 print(f"📂 DIRECTORIO BASE: {DIR_BASE}")
 print("==================================================================")
 
@@ -133,6 +133,10 @@ if list_bd:
     df_sla["Area_Salida"] = df_sla.set_index(["Pedido", "Tienda"]).index.map(mapa_area_pedido_tienda)
     df_sla["Area_Salida"] = df_sla["Area_Salida"].fillna(df_sla["Pedido"].map(mapa_area_salida_solo)).fillna("Sin Clasificar").replace(["", "nan", "None"], "Sin Clasificar")
 
+    # Excepción Opción A: Anular Área 13 para Almacén 514 en SLA
+    mask_alm514_area13_sla = (df_sla["Almacen"] == "514") & (df_sla["Area_Salida"] == "13")
+    df_sla.loc[mask_alm514_area13_sla, "Area_Salida"] = "Sin Clasificar"
+
     col_fec = [c for c in df_sla.columns if any(k in c.lower() for k in ["fecha servido", "fecha_servido", "fecha de grabación", "fecha"])][0]
     fec_str = df_sla[col_fec].astype(str).str.strip()
     fec_dt = pd.to_datetime(fec_str, format="%Y%m%d", errors="coerce")
@@ -243,7 +247,18 @@ if list_rect:
     cols_exist = [c for c in cols_clave_rect if c in df_rect_all.columns]
     df_rect_all = df_rect_all.drop_duplicates(subset=cols_exist, keep="first")
 
+    # --------------------------------------------------------------------------
+    # 🛠️ OPCIÓN A: PURGA Y REINFERENCIA DE ÁREA 13 PARA ALMACÉN 514
+    # --------------------------------------------------------------------------
+    mask_alm514_area13 = (df_rect_all["Almacen"] == "514") & (df_rect_all["Area_Salida"] == "13")
+    cant_anuladas_514 = mask_alm514_area13.sum()
+    if cant_anuladas_514 > 0:
+        df_rect_all.loc[mask_alm514_area13, "Area_Salida"] = "Sin Clasificar"
+        print(f"    ⚠️ Se anularon {cant_anuladas_514:,} asignaciones directas de Área 13 en Almacén 514 para forzar inferencia.")
+
+    # --------------------------------------------------------------------------
     # ⚡ INFERENCIA EN CASCADA (NIVEL 3: ALMACÉN + ARTÍCULO | NIVEL 4: ALMACÉN + FAMILIA)
+    # --------------------------------------------------------------------------
     df_validos = df_rect_all[df_rect_all["Area_Salida"] != "Sin Clasificar"]
 
     mapa_art_area = df_validos.groupby(["Almacen", col_art_rect])["Area_Salida"].agg(
@@ -276,13 +291,13 @@ if list_rect:
                 .fillna("Sin Clasificar")
             )
 
-    print(f"✨ Inferencia completada: {cant_sin_area_ini:,} líneas reasignadas por inferencia (Almacén + Artículo / Familia).")
+    print(f"✨ Inferencia completada: {cant_sin_area_ini:,} líneas procesadas mediante (Almacén + Artículo / Familia).")
 
     # 💾 GUARDAR PARQUET 1: DETALLE DE RECTIFICACIONES
     df_rect_all.to_parquet(PATH_PARQUET_RECT, index=False)
     print(f"   ✓ Archivo Parquet actualizado: {PATH_PARQUET_RECT}")
 
-    # 6. EVALUAR CASUÍSTICA Y SLA PARA ACTUALIZAR PARQUET 2 (PEDIDOS SLA)
+    # 6. EVALUAR CASUÍSTICA Y SLA
     col_motivo = "Motivo_Clean" if "Motivo_Clean" in df_rect_all.columns else "Motivo"
     df_rect_all["Motivo_Norm"] = df_rect_all[col_motivo].astype(str).str.strip().str.upper()
 
@@ -342,7 +357,7 @@ if list_rect:
         df_sla["Casuistica"] = df_sla["Casuistica"].fillna("Pedido Perfecto")
         df_sla["Puntos_Obtenidos"] = df_sla["Puntos_Obtenidos"].fillna(10.0)
         
-        # 💾 GUARDAR PARQUET 2: RESUMEN SLA DE PEDIDOS
+        # 💾 GUARDAR PARQUET 2: RESUMEN SLA
         df_sla.to_parquet(PATH_PARQUET_SLA, index=False)
         print(f"   ✓ Archivo Parquet actualizado: {PATH_PARQUET_SLA}")
 
