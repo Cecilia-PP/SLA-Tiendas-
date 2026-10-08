@@ -884,7 +884,7 @@ try:
 
                     col_m1, col_m2 = st.columns(2)
                     col_m1.metric("🚨 Pedidos Sustitución Distinta Subfamilia (Desfavorable en Tienda)", f"{tot_pedidos_sust_desf:,}")
-                    col_m2.metric("💸 Pérdida de Valor Total ($)", f"".replace(",", "X").replace(".", ",").replace("X", "."))
+                    col_m2.metric("💸 Pérdida de Valor Total ($)", f"${tot_perdida_monto:,.2f}")
 
                     st.markdown("---")
                     st.markdown("### 🏆 Top 10 de Tiendas con Mayor Cantidad de Pedidos Afectados")
@@ -1048,10 +1048,10 @@ try:
             else:
                 st.info("ℹ️ No existen pedidos de 'Sustitución Distinta Subfamilia' para la selección actual de filtros.")
 
-        # HOJA 5: RECTIFICACIONES POR ÁREA DE SALIDA (Doble gráfico: Cantidad de Líneas vs Monto Confirmado)
+        # HOJA 5: RECTIFICACIONES POR ÁREA DE SALIDA (Doble gráfico: Pedidos Únicos Rectificados vs Monto Confirmado)
         with tab5:
             st.subheader("📦 Análisis de Rectificaciones por Área de Salida")
-            st.markdown("Consolidado y auditoría de líneas rectificadas clasificadas según el **Área de Salida** del sector de preparación (las rectificaciones sin área se agrupan en **'Sin Clasificar'**).")
+            st.markdown("Consolidado y auditoría de pedidos rectificados clasificados según el **Área de Salida** del sector de preparación.")
 
             if not df_rect.empty:
                 df_r_area = df_rect.copy()
@@ -1088,41 +1088,41 @@ try:
 
                 a1, a2, a3, a4 = st.columns(4)
                 a1.metric("📌 Áreas de Salida Involucradas", f"{tot_areas_unicas:,}")
-                a2.metric("📦 Pedidos con Rectificación", f"{tot_pedidos_afect_area:,}")
+                a2.metric("📦 Pedidos Únicos con Rectificación", f"{tot_pedidos_afect_area:,}")
                 a3.metric("📉 Líneas Rectificadas Totales", f"{tot_lineas_area:,}")
-                a4.metric("💰 Monto Confirmado Estado 'M' ($)", f"".replace(",", "X").replace(".", ",").replace("X", "."))
+                a4.metric("💰 Monto Confirmado Estado 'M' ($)", f"${tot_monto_conf_area:,.2f}")
 
                 st.markdown("---")
-                st.markdown("### 📊 Distribución de Líneas y Monto Confirmado por Área de Salida")
+                st.markdown("### 📊 Distribución de Pedidos Rectificados y Monto Confirmado por Área de Salida")
 
                 tb_area_graf = df_r_area.groupby("Area_Salida", as_index=False).agg(
-                    Lineas_Rectificadas=("Pedido", "count"),
+                    Pedidos_Rectificados=("Pedido", "nunique"),
                     Monto_Confirmado=("Monto_Confirmado", "sum")
-                ).sort_values(by="Lineas_Rectificadas", ascending=False).reset_index(drop=True)
+                ).sort_values(by="Pedidos_Rectificados", ascending=False).reset_index(drop=True)
 
                 col_g1, col_g2 = st.columns(2)
 
-                # GRÁFICO 1: CANTIDAD DE LÍNEAS
+                # GRÁFICO 1: CANTIDAD DE PEDIDOS ÚNICOS
                 with col_g1:
-                    fig_area_lineas = px.bar(
-                        tb_area_graf, x="Area_Salida", y="Lineas_Rectificadas",
-                        color="Area_Salida", text="Lineas_Rectificadas",
-                        title="<b>Cantidad de Líneas Rectificadas por Sector</b>"
+                    fig_area_pedidos = px.bar(
+                        tb_area_graf, x="Area_Salida", y="Pedidos_Rectificados",
+                        color="Area_Salida", text="Pedidos_Rectificados",
+                        title="<b>Cantidad de Pedidos Rectificados por Sector</b>"
                     )
-                    fig_area_lineas.update_traces(textposition='outside')
-                    fig_area_lineas.update_layout(
+                    fig_area_pedidos.update_traces(textposition='outside')
+                    fig_area_pedidos.update_layout(
                         xaxis_title="Área de Salida", 
-                        yaxis_title="Cantidad de Líneas",
+                        yaxis_title="Cantidad de Pedidos",
                         height=390, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                         showlegend=False,
                         xaxis=dict(type='category')
                     )
-                    st.plotly_chart(fig_area_lineas, use_container_width=True)
+                    st.plotly_chart(fig_area_pedidos, use_container_width=True)
 
                 # GRÁFICO 2: MONTO CONFIRMADO ESTADO 'M'
                 with col_g2:
                     tb_area_graf_monto = tb_area_graf.sort_values(by="Monto_Confirmado", ascending=False).reset_index(drop=True)
-                    tb_area_graf_monto["Monto_Texto"] = tb_area_graf_monto["Monto_Confirmado"].apply(lambda x: f"".replace(",", "."))
+                    tb_area_graf_monto["Monto_Texto"] = tb_area_graf_monto["Monto_Confirmado"].apply(lambda x: f"${x:,.0f}")
 
                     fig_area_monto = px.bar(
                         tb_area_graf_monto, x="Area_Salida", y="Monto_Confirmado",
@@ -1150,8 +1150,8 @@ try:
                     Monto_Confirmado=("Monto_Confirmado", "sum")
                 )
 
-                tb_area_matriz["% Participación Líneas"] = (tb_area_matriz["Lineas_Rectificadas"] / tot_lineas_area * 100.0) if tot_lineas_area > 0 else 0.0
-                tb_area_matriz = tb_area_matriz.sort_values(by="Lineas_Rectificadas", ascending=False).reset_index(drop=True)
+                tb_area_matriz["% Participación Pedidos"] = (tb_area_matriz["Pedidos_Afectados"] / tot_pedidos_afect_area * 100.0) if tot_pedidos_afect_area > 0 else 0.0
+                tb_area_matriz = tb_area_matriz.sort_values(by="Pedidos_Afectados", ascending=False).reset_index(drop=True)
 
                 tb_area_matriz_disp = tb_area_matriz.rename(columns={
                     "Area_Salida": "Área de Salida",
@@ -1160,11 +1160,11 @@ try:
                     "Monto_Falta": "Monto Falta ($)",
                     "Monto_Sobra": "Monto Sobra ($)",
                     "Monto_Confirmado": "Diferencia Neta Confirmada ($)",
-                    "% Participación Líneas": "% Participación"
+                    "% Participación Pedidos": "% Participación Pedidos"
                 })
 
                 st.dataframe(
-                    tb_area_matriz_disp[["Área de Salida", "Pedidos Afectados", "Líneas Rectificadas", "Monto Falta ($)", "Monto Sobra ($)", "Diferencia Neta Confirmada ($)", "% Participación"]],
+                    tb_area_matriz_disp[["Área de Salida", "Pedidos Afectados", "Líneas Rectificadas", "Monto Falta ($)", "Monto Sobra ($)", "Diferencia Neta Confirmada ($)", "% Participación Pedidos"]],
                     hide_index=True,
                     column_config={
                         "Área de Salida": st.column_config.Column("Área de Salida", width="large"),
@@ -1173,7 +1173,7 @@ try:
                         "Monto Falta ($)": st.column_config.NumberColumn("Monto Falta ($)", format="$%.2f", width="medium"),
                         "Monto Sobra ($)": st.column_config.NumberColumn("Monto Sobra ($)", format="$%.2f", width="medium"),
                         "Diferencia Neta Confirmada ($)": st.column_config.NumberColumn("Diferencia Neta Confirmada ($)", format="$%.2f", width="large"),
-                        "% Participación": st.column_config.NumberColumn("% Participación", format="%.2f %%", width="medium")
+                        "% Participación Pedidos": st.column_config.NumberColumn("% Participación Pedidos", format="%.2f %%", width="medium")
                     }
                 )
 
