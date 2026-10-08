@@ -73,6 +73,12 @@ def cargar_datos_sla():
                 df_sla["Mes"] = 0
 
         if not df_rect.empty:
+            col_est_raw = "Estado_Clean" if "Estado_Clean" in df_rect.columns else ("Estado" if "Estado" in df_rect.columns else None)
+            if col_est_raw:
+                df_rect["Estado"] = df_rect[col_est_raw].astype(str).str.strip().str.upper()
+            else:
+                df_rect["Estado"] = "M"
+
             if "Monto_Rectif" not in df_rect.columns:
                 col_m = None
                 for c in ["Imp.tien.PVP S/IVA mon.BD", "Monto", "Importe"]:
@@ -170,6 +176,19 @@ try:
             if not df_rect.empty:
                 pedidos_validos_cas = set(df_sla["Pedido"].dropna().unique())
                 df_rect = df_rect[df_rect["Pedido"].isin(pedidos_validos_cas)]
+
+        # --- FILTRO DE ESTADO DE RECTIFICACIÓN (M / P / R) EN EL SIDEBAR ---
+        if not df_rect.empty and "Estado" in df_rect.columns:
+            st.sidebar.markdown("---")
+            st.sidebar.header("📋 Estado de Rectificación")
+            estados_opciones = sorted([str(x) for x in df_rect["Estado"].dropna().unique() if str(x) != "nan"])
+            estado_sel = st.sidebar.multiselect(
+                "Estado Rectificación (M=Conf, P=Pend, R=Rech):", 
+                estados_opciones, 
+                default=estados_opciones,
+                help="M = Confirmada | P = Pendiente | R = Rechazada"
+            )
+            df_rect = df_rect[df_rect["Estado"].isin(estado_sel)]
 
         if not df_rect.empty:
             st.sidebar.markdown("---")
@@ -816,11 +835,7 @@ try:
                 else:
                     df_r_sust["Motivo_Norm"] = "F"
 
-                col_est_s = "Estado_Clean" if "Estado_Clean" in df_r_sust.columns else ("Estado" if "Estado" in df_r_sust.columns else None)
-                if col_est_s:
-                    df_r_sust["Estado_Norm"] = df_r_sust[col_est_s].astype(str).str.strip().str.upper()
-                else:
-                    df_r_sust["Estado_Norm"] = "M"
+                df_r_sust["Estado_Norm"] = df_r_sust["Estado"].astype(str).str.strip().str.upper() if "Estado" in df_r_sust.columns else "M"
 
                 col_art_lbl = "Artículo" if "Artículo" in df_r_sust.columns else ("SKU" if "SKU" in df_r_sust.columns else "Producto")
                 col_desc_lbl = "Descripción" if "Descripción" in df_r_sust.columns else "Producto"
@@ -1051,11 +1066,15 @@ try:
         # HOJA 5: RECTIFICACIONES POR ÁREA DE SALIDA (Doble gráfico: Pedidos Únicos Rectificados vs Monto Confirmado)
         with tab5:
             st.subheader("📦 Análisis de Rectificaciones por Área de Salida")
-            st.markdown("Consolidado y auditoría de pedidos rectificados clasificados según el **Área de Salida** del sector de preparación.")
+            st.markdown("Consolidado y auditoría de pedidos rectificados por **Área de Salida** (se excluyen automáticamente las rectificaciones rechazadas en **Estado 'R'**).")
 
             if not df_rect.empty:
                 df_r_area = df_rect.copy()
                 
+                # Excluir de forma predeterminada las rectificaciones rechazadas 'R'
+                if "Estado" in df_r_area.columns:
+                    df_r_area = df_r_area[df_r_area["Estado"] != "R"].copy()
+
                 if "Area_Salida" not in df_r_area.columns:
                     df_r_area["Area_Salida"] = "Sin Clasificar"
                 else:
@@ -1068,11 +1087,7 @@ try:
                 else:
                     df_r_area["Motivo_Norm"] = "F"
 
-                col_est_area = "Estado_Clean" if "Estado_Clean" in df_r_area.columns else ("Estado" if "Estado" in df_r_area.columns else None)
-                if col_est_area:
-                    df_r_area["Estado_Norm"] = df_r_area[col_est_area].astype(str).str.strip().str.upper()
-                else:
-                    df_r_area["Estado_Norm"] = "M"
+                df_r_area["Estado_Norm"] = df_r_area["Estado"].astype(str).str.strip().str.upper() if "Estado" in df_r_area.columns else "M"
 
                 df_r_area["Monto_Falta"] = df_r_area.apply(lambda r: float(r["Monto_Rectif"]) if r["Motivo_Norm"] == "F" else 0.0, axis=1)
                 df_r_area["Monto_Sobra"] = df_r_area.apply(lambda r: float(r["Monto_Rectif"]) if r["Motivo_Norm"] == "S" else 0.0, axis=1)
@@ -1089,7 +1104,7 @@ try:
                 a1, a2, a3, a4 = st.columns(4)
                 a1.metric("📌 Áreas de Salida Involucradas", f"{tot_areas_unicas:,}")
                 a2.metric("📦 Pedidos Únicos con Rectificación", f"{tot_pedidos_afect_area:,}")
-                a3.metric("📉 Líneas Rectificadas Totales", f"{tot_lineas_area:,}")
+                a3.metric("📉 Líneas Válidas Totales", f"{tot_lineas_area:,}")
                 a4.metric("💰 Monto Confirmado Estado 'M' ($)", f"${tot_monto_conf_area:,.2f}")
 
                 st.markdown("---")

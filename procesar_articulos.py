@@ -2,8 +2,20 @@
 import glob
 import os
 
+# ==============================================================================
+# CONFIGURACIÓN DE RUTAS ABSOLUTAS Y DIRECTORIO DE TRABAJO
+# ==============================================================================
+DIR_BASE = r"C:\Users\cpe021ar\Documents\Python\Tablero_Satifacción_de_Tienda"
+DIR_DATOS = os.path.join(DIR_BASE, "Datos_mensuales")
+
+os.chdir(DIR_BASE)
+
+PATH_PARQUET_RECT = os.path.join(DIR_BASE, "Tablero_Rectificaciones_Detalle.parquet")
+PATH_PARQUET_SLA = os.path.join(DIR_BASE, "Tablero_SLA_Pedidos.parquet")
+
 print("==================================================================")
-print("🚀 CORRIGIENDO DEDUPLICACIÓN DE ÁREA DE SALIDA X PEDIDO Y APLICANDO INFERENCIA")
+print("🚀 EJECUTANDO ETL, PURGA DE AUTOMÁTICAS Y ACTUALIZACIÓN DE PARQUET")
+print(f"📂 DIRECTORIO BASE: {DIR_BASE}")
 print("==================================================================")
 
 def normalizar_pedido(val):
@@ -15,7 +27,7 @@ def normalizar_pedido(val):
     return s.lstrip("0")
 
 # 1. MAPEO DE ZONA / SUPERVISIÓN
-path_zona = glob.glob("Datos_mensuales/*[Zz]ona*.csv") + glob.glob("*[Zz]ona*.csv")
+path_zona = glob.glob(os.path.join(DIR_DATOS, "*[Zz]ona*.csv")) + glob.glob(os.path.join(DIR_BASE, "*[Zz]ona*.csv"))
 mapa_supervisores = {}
 mapa_gestion = {}
 
@@ -38,9 +50,11 @@ if path_zona:
     except Exception as e:
         print(f"    ⚠️ Warning cargando Zona: {e}")
 
-# 2. MAPEO DEDUPLICADO DE ÁREA DE SALIDA X PEDIDO (1 A 1 ESTRICTO)
-mapa_area_salida = {}
-archivos_area = glob.glob("Datos_mensuales/*[Aa]rea*[Ss]alida*.csv") + glob.glob("*[Aa]rea*[Ss]alida*.csv")
+# 2. MAPEO DEDUPLICADO DE ÁREA DE SALIDA (PEDIDO + TIENDA Y PEDIDO SOLO)
+mapa_area_pedido_tienda = {}
+mapa_area_salida_solo = {}
+
+archivos_area = glob.glob(os.path.join(DIR_DATOS, "*[Aa]rea*[Ss]alida*.csv")) + glob.glob(os.path.join(DIR_BASE, "*[Aa]rea*[Ss]alida*.csv"))
 
 if archivos_area:
     list_area = []
@@ -52,9 +66,16 @@ if archivos_area:
             
             col_p = [c for c in df_a.columns if any(k in c for k in ["PEDIDO", "Nº DE PEDIDO", "Nº PEDIDO", "NRO_PEDIDO"])][0]
             col_v = [c for c in df_a.columns if any(k in c for k in ["AREA", "ÁREA", "SALIDA", "DESCRIPCION", "SECTOR"])][0]
+            col_t_a = [c for c in df_a.columns if any(k in c for k in ["TIENDA", "SUCURSAL", "COD_SUC_DES", "DESTINO"])]
             
-            df_sub = df_a[[col_p, col_v]].copy()
-            df_sub.columns = ["Pedido_Raw", "Area_Raw"]
+            if col_t_a:
+                df_sub = df_a[[col_p, col_t_a[0], col_v]].copy()
+                df_sub.columns = ["Pedido_Raw", "Tienda_Raw", "Area_Raw"]
+            else:
+                df_sub = df_a[[col_p, col_v]].copy()
+                df_sub["Tienda_Raw"] = ""
+                df_sub = df_sub[["Pedido_Raw", "Tienda_Raw", "Area_Raw"]]
+
             list_area.append(df_sub)
         except Exception as e:
             print(f"    ⚠️ Error leyendo {f}: {e}")
@@ -62,19 +83,26 @@ if archivos_area:
     if list_area:
         df_area_concat = pd.concat(list_area, ignore_index=True)
         df_area_concat["Pedido_Clean"] = df_area_concat["Pedido_Raw"].apply(normalizar_pedido)
+        df_area_concat["Tienda_Clean"] = df_area_concat["Tienda_Raw"].apply(normalizar_pedido)
         df_area_concat["Area_Clean"] = df_area_concat["Area_Raw"].astype(str).str.strip()
         
-        # Eliminar vacíos y tomar solo la primera área válida asignada por pedido (EVITA DUPLICAR FILAS)
         df_area_valida = df_area_concat[
             (df_area_concat["Pedido_Clean"] != "") & 
             (~df_area_concat["Area_Clean"].isin(["", "nan", "None", "0"]))
-        ].drop_duplicates(subset=["Pedido_Clean"], keep="first")
-        
-        mapa_area_salida = df_area_valida.set_index("Pedido_Clean")["Area_Clean"].to_dict()
-        print(f"    ✓ Diccionario de consulta construido con {len(mapa_area_salida):,} pedidos únicos con Área de Salida.")
+        ]
+
+        # Nivel 1: Pedido + Tienda
+        df_pt_valido = df_area_valida[df_area_valida["Tienda_Clean"] != ""].drop_duplicates(subset=["Pedido_Clean", "Tienda_Clean"], keep="first")
+        mapa_area_pedido_tienda = df_pt_valido.set_index(["Pedido_Clean", "Tienda_Clean"])["Area_Clean"].to_dict()
+
+        # Nivel 2: Pedido solo (Respaldo)
+        df_p_valido = df_area_valida.drop_duplicates(subset=["Pedido_Clean"], keep="first")
+        mapa_area_salida_solo = df_p_valido.set_index("Pedido_Clean")["Area_Clean"].to_dict()
+
+        print(f"    ✓ Diccionario de consulta construido con {len(mapa_area_pedido_tienda):,} claves únicas (Pedido + Tienda).")
 
 # 3. CARGAR BDMVTAL (MAESTRO DE PEDIDOS)
-archivos_bd = glob.glob("Datos_mensuales/BDMVTAL*.csv") + glob.glob("BDMVTAL*.csv")
+archivos_bd = glob.glob(os.path.join(DIR_DATOS, "BDMVTAL*.csv")) + glob.glob(os.path.join(DIR_BASE, "BDMVTAL*.csv"))
 list_bd = []
 
 for f in archivos_bd:
@@ -85,6 +113,7 @@ for f in archivos_bd:
     except Exception as e:
         print(f"    ⚠️ Error cargando {f}: {e}")
 
+df_sla = pd.DataFrame()
 if list_bd:
     df_sla = pd.concat(list_bd, ignore_index=True)
     
@@ -100,7 +129,9 @@ if list_bd:
     df_sla["Gestion"] = df_sla["Tienda"].map(mapa_gestion).fillna("Sin Clasificar").replace(["", "nan", "None"], "Sin Clasificar")
     df_sla["Responsable_Tienda"] = df_sla["Tienda"].map(mapa_supervisores).fillna("Sin Asignar").replace(["", "nan", "None"], "Sin Asignar")
     
-    df_sla["Area_Salida"] = df_sla["Pedido"].map(mapa_area_salida).fillna("Sin Clasificar").replace(["", "nan", "None"], "Sin Clasificar")
+    # Asignación Áreas: Nivel 1 (Pedido + Tienda) -> Nivel 2 (Pedido Solo)
+    df_sla["Area_Salida"] = df_sla.set_index(["Pedido", "Tienda"]).index.map(mapa_area_pedido_tienda)
+    df_sla["Area_Salida"] = df_sla["Area_Salida"].fillna(df_sla["Pedido"].map(mapa_area_salida_solo)).fillna("Sin Clasificar").replace(["", "nan", "None"], "Sin Clasificar")
 
     col_fec = [c for c in df_sla.columns if any(k in c.lower() for k in ["fecha servido", "fecha_servido", "fecha de grabación", "fecha"])][0]
     fec_str = df_sla[col_fec].astype(str).str.strip()
@@ -115,8 +146,8 @@ if list_bd:
 
     df_sla = df_sla.drop_duplicates(subset=["Pedido"], keep="first")
 
-# 4. CARGAR MAESTRO
-path_maestro = glob.glob("Datos_mensuales/*[Mm]aestro*.csv") + glob.glob("*[Mm]aestro*.csv")
+# 4. CARGAR MAESTRO DE PRODUCTOS
+path_maestro = glob.glob(os.path.join(DIR_DATOS, "*[Mm]aestro*.csv")) + glob.glob(os.path.join(DIR_BASE, "*[Mm]aestro*.csv"))
 df_maestro = pd.DataFrame()
 if path_maestro:
     try:
@@ -137,8 +168,8 @@ if path_maestro:
     except Exception as e:
         print(f"    ⚠️ Error Maestro: {e}")
 
-# 5. CARGAR RECTIFICACIONES
-archivos_rect = glob.glob("Datos_mensuales/*[Rr]ectif*.csv") + glob.glob("*[Rr]ectif*.csv")
+# 5. CARGAR Y FILTRAR RECTIFICACIONES
+archivos_rect = glob.glob(os.path.join(DIR_DATOS, "*[Rr]ectif*.csv")) + glob.glob(os.path.join(DIR_BASE, "*[Rr]ectif*.csv"))
 list_rect = []
 
 for f in archivos_rect:
@@ -152,11 +183,25 @@ for f in archivos_rect:
 if list_rect:
     df_rect_all = pd.concat(list_rect, ignore_index=True)
 
+    # 🚫 PURGA ESTRICTA: ELIMINAR RECTIFICACIONES AUTOMÁTICAS ('A', 'AUTO', 'AUTOMATICA')
+    cols_check = [c for c in df_rect_all.columns if any(k in c.lower() for k in ["estado", "procedencia", "origen", "tipo"])]
+    mask_auto = pd.Series(False, index=df_rect_all.index)
+    for col in cols_check:
+        mask_auto = mask_auto | df_rect_all[col].astype(str).str.strip().str.upper().isin(["A", "AUTO", "AUTOMATICA", "AUTOMÁTICA"])
+
+    cant_auto = mask_auto.sum()
+    df_rect_all = df_rect_all[~mask_auto].copy()
+    print(f"    🚫 Purga realizada: {cant_auto:,} rectificaciones automáticas fueron eliminadas de la base de datos.")
+
     col_ped_r = [c for c in df_rect_all.columns if c.lower() in ["nº de pedido", "pedido", "nº pedido", "nro_pedido", "num_pedido"]][0]
     df_rect_all["Pedido"] = df_rect_all[col_ped_r].apply(normalizar_pedido)
 
-    # VINCULAR ÁREA DE SALIDA A NIVEL LÍNEA DE RECTIFICACIÓN (NIVEL 1: CRUCE DIRECTO)
-    df_rect_all["Area_Salida"] = df_rect_all["Pedido"].map(mapa_area_salida).fillna("Sin Clasificar").replace(["", "nan", "None"], "Sin Clasificar")
+    col_tien_r = [c for c in df_rect_all.columns if any(k in c.lower() for k in ["tienda", "sucursal", "cod_suc_des"])][0]
+    df_rect_all["Tienda"] = df_rect_all[col_tien_r].apply(normalizar_pedido)
+
+    # ⚡ ASIGNACIÓN ÁREA NIVEL 1: (PEDIDO + TIENDA) -> NIVEL 2: (PEDIDO SOLO)
+    df_rect_all["Area_Salida"] = df_rect_all.set_index(["Pedido", "Tienda"]).index.map(mapa_area_pedido_tienda)
+    df_rect_all["Area_Salida"] = df_rect_all["Area_Salida"].fillna(df_rect_all["Pedido"].map(mapa_area_salida_solo)).fillna("Sin Clasificar").replace(["", "nan", "None"], "Sin Clasificar")
 
     col_art_rect = "Artículo" if "Artículo" in df_rect_all.columns else "SKU"
     col_art_mae = "Artículo" if "Artículo" in df_maestro.columns else ("SKU" if "SKU" in df_maestro.columns else None)
@@ -180,9 +225,6 @@ if list_rect:
     df_rect_all["Subfamilia"] = df_rect_all.get("Subfamilia", pd.Series()).fillna("Sin Subfamilia")
     df_rect_all["Es_Master"] = df_rect_all.get("Es_Master", pd.Series()).fillna("No")
 
-    col_tien_r = [c for c in df_rect_all.columns if any(k in c.lower() for k in ["tienda", "sucursal", "cod_suc_des"])][0]
-    df_rect_all["Tienda"] = df_rect_all[col_tien_r].apply(normalizar_pedido)
-    
     col_alm_r = [c for c in df_rect_all.columns if any(k in c.lower() for k in ["cod. almacen", "almacen", "almacén", "cd"])][0]
     df_rect_all["Almacen"] = df_rect_all[col_alm_r].astype(str).str.strip()
 
@@ -196,30 +238,51 @@ if list_rect:
     if col_monto:
         df_rect_all["Monto_Rectif"] = pd.to_numeric(df_rect_all[col_monto[0]].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
 
-    # DEDUPLICAR LÍNEAS RECTIFICADAS CLAVE
+    # DEDUPLICAR LÍNEAS
     cols_clave_rect = ["Pedido", "Nº Rectificación", col_art_rect, "Motivo"]
     cols_exist = [c for c in cols_clave_rect if c in df_rect_all.columns]
     df_rect_all = df_rect_all.drop_duplicates(subset=cols_exist, keep="first")
 
-    # ==============================================================================
-    # ⚡ INFERENCIA DE ÁREA DE SALIDA POR FAMILIA (NIVEL 2: RECTIFICACIONES SIN ÁREA)
-    # ==============================================================================
+    # ⚡ INFERENCIA EN CASCADA (NIVEL 3: ALMACÉN + ARTÍCULO | NIVEL 4: ALMACÉN + FAMILIA)
     df_validos = df_rect_all[df_rect_all["Area_Salida"] != "Sin Clasificar"]
-    mapa_familia_area = df_validos.groupby(["Almacen", "Familia"])["Area_Salida"].agg(
+
+    mapa_art_area = df_validos.groupby(["Almacen", col_art_rect])["Area_Salida"].agg(
+        lambda x: x.mode()[0] if not x.empty else "Sin Clasificar"
+    ).to_dict()
+
+    mapa_fam_area = df_validos.groupby(["Almacen", "Familia"])["Area_Salida"].agg(
         lambda x: x.mode()[0] if not x.empty else "Sin Clasificar"
     ).to_dict()
 
     mask_sin_area = df_rect_all["Area_Salida"] == "Sin Clasificar"
-    cant_sin_area = mask_sin_area.sum()
+    cant_sin_area_ini = mask_sin_area.sum()
 
-    df_rect_all.loc[mask_sin_area, "Area_Salida"] = df_rect_all[mask_sin_area].set_index(["Almacen", "Familia"]).index.map(mapa_familia_area).fillna("Sin Clasificar")
+    if cant_sin_area_ini > 0:
+        # Nivel 3: Almacén + Artículo
+        df_rect_all.loc[mask_sin_area, "Area_Salida"] = (
+            df_rect_all[mask_sin_area]
+            .set_index(["Almacen", col_art_rect])
+            .index.map(mapa_art_area)
+            .fillna("Sin Clasificar")
+        )
 
-    print(f"✨ Inferencia completada: {cant_sin_area:,} líneas 'Sin Clasificar' fueron reasignadas por (Almacén + Familia).")
+        # Nivel 4: Almacén + Familia
+        mask_todavia_sin_area = df_rect_all["Area_Salida"] == "Sin Clasificar"
+        if mask_todavia_sin_area.any():
+            df_rect_all.loc[mask_todavia_sin_area, "Area_Salida"] = (
+                df_rect_all[mask_todavia_sin_area]
+                .set_index(["Almacen", "Familia"])
+                .index.map(mapa_fam_area)
+                .fillna("Sin Clasificar")
+            )
 
-    # GUARDAR PARQUET DE RECTIFICACIONES DETALLE
-    df_rect_all.to_parquet("Tablero_Rectificaciones_Detalle.parquet", index=False)
+    print(f"✨ Inferencia completada: {cant_sin_area_ini:,} líneas reasignadas por inferencia (Almacén + Artículo / Familia).")
 
-    # 6. EVALUAR CASUÍSTICA Y SLA
+    # 💾 GUARDAR PARQUET 1: DETALLE DE RECTIFICACIONES
+    df_rect_all.to_parquet(PATH_PARQUET_RECT, index=False)
+    print(f"   ✓ Archivo Parquet actualizado: {PATH_PARQUET_RECT}")
+
+    # 6. EVALUAR CASUÍSTICA Y SLA PARA ACTUALIZAR PARQUET 2 (PEDIDOS SLA)
     col_motivo = "Motivo_Clean" if "Motivo_Clean" in df_rect_all.columns else "Motivo"
     df_rect_all["Motivo_Norm"] = df_rect_all[col_motivo].astype(str).str.strip().str.upper()
 
@@ -278,6 +341,11 @@ if list_rect:
         df_sla = df_sla.merge(resumen_ped, on="Pedido", how="left")
         df_sla["Casuistica"] = df_sla["Casuistica"].fillna("Pedido Perfecto")
         df_sla["Puntos_Obtenidos"] = df_sla["Puntos_Obtenidos"].fillna(10.0)
-        df_sla.to_parquet("Tablero_SLA_Pedidos.parquet", index=False)
+        
+        # 💾 GUARDAR PARQUET 2: RESUMEN SLA DE PEDIDOS
+        df_sla.to_parquet(PATH_PARQUET_SLA, index=False)
+        print(f"   ✓ Archivo Parquet actualizado: {PATH_PARQUET_SLA}")
 
-print("✨ PROCESO Y DEDUPLICACIÓN COMPLETADOS CORRECTAMENTE.")
+print("==================================================================")
+print("✨ PROCESO COMPLETADO Y LOS 2 ARCHIVOS PARQUET FUERON GENERADOS CORRECTAMENTE.")
+print("==================================================================")
