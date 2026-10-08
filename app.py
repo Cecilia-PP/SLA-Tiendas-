@@ -124,6 +124,7 @@ try:
     if not df_sla.empty:
         st.sidebar.header("🔍 Filtros de Búsqueda")
 
+        # 1. FILTRO DE ALMACÉN
         if "Almacen" in df_sla.columns:
             almacenes = sorted([str(x) for x in df_sla["Almacen"].dropna().unique()])
             almacen_sel = st.sidebar.multiselect("Almacén:", almacenes, default=almacenes)
@@ -131,6 +132,7 @@ try:
             if not df_rect.empty and "Almacen" in df_rect.columns:
                 df_rect = df_rect[df_rect["Almacen"].astype(str).isin(almacen_sel)]
 
+        # 2. FILTRO DE GESTIÓN / ZONA
         if "Gestion" in df_sla.columns and df_sla["Gestion"].notna().any():
             gestiones = sorted([str(x) for x in df_sla["Gestion"].dropna().unique()])
             gestion_sel = st.sidebar.multiselect("Gestión / Zona:", gestiones, default=gestiones)
@@ -138,13 +140,21 @@ try:
             if not df_rect.empty and "Gestion" in df_rect.columns:
                 df_rect = df_rect[df_rect["Gestion"].astype(str).isin(gestion_sel)]
 
-        if "Area_Salida" in df_sla.columns and df_sla["Area_Salida"].notna().any():
-            areas_salida = sorted([str(x) for x in df_sla["Area_Salida"].dropna().unique()])
-            area_sel = st.sidebar.multiselect("Área de Salida:", areas_salida, default=areas_salida)
-            df_sla = df_sla[df_sla["Area_Salida"].astype(str).isin(area_sel)]
+        # 3. FILTRO DINÁMICO DE ÁREA DE SALIDA (EXCLUYENDO DE LAS OPCIONES LAS ÁREAS 19 Y 24)
+        areas_sla = set(df_sla["Area_Salida"].dropna().astype(str).unique()) if "Area_Salida" in df_sla.columns else set()
+        areas_rect = set(df_rect["Area_Salida"].dropna().astype(str).unique()) if not df_rect.empty and "Area_Salida" in df_rect.columns else set()
+        
+        areas_universo = areas_sla.union(areas_rect)
+        areas_disponibles = sorted([a for a in areas_universo if a.strip() not in ["19", "24"]])
+
+        if areas_disponibles:
+            area_sel = st.sidebar.multiselect("Área de Salida:", areas_disponibles, default=areas_disponibles)
+            if "Area_Salida" in df_sla.columns:
+                df_sla = df_sla[df_sla["Area_Salida"].astype(str).isin(area_sel)]
             if not df_rect.empty and "Area_Salida" in df_rect.columns:
                 df_rect = df_rect[df_rect["Area_Salida"].astype(str).isin(area_sel)]
 
+        # 4. FILTRO DE FRANQUICIADO / SUPERVISOR
         if "Responsable_Tienda" in df_sla.columns and df_sla["Responsable_Tienda"].notna().any():
             responsables = sorted([str(x) for x in df_sla["Responsable_Tienda"].dropna().unique()])
             resp_sel = st.sidebar.multiselect("Franquiciado / Supervisor:", responsables, default=responsables)
@@ -152,6 +162,7 @@ try:
             if not df_rect.empty and "Responsable_Tienda" in df_rect.columns:
                 df_rect = df_rect[df_rect["Responsable_Tienda"].astype(str).isin(resp_sel)]
 
+        # 5. FILTRO DE TIENDA
         if "Tienda" in df_sla.columns:
             tiendas = sorted([str(x) for x in df_sla["Tienda"].dropna().unique() if str(x) != "nan"])
             tienda_sel = st.sidebar.multiselect("Tienda:", tiendas, default=tiendas)
@@ -159,6 +170,7 @@ try:
             if not df_rect.empty and "Tienda" in df_rect.columns:
                 df_rect = df_rect[df_rect["Tienda"].astype(str).isin(tienda_sel)]
 
+        # 6. FILTRO DE CASUÍSTICA
         if "Casuistica" in df_sla.columns:
             orden_cas_filtro = [
                 "Pedido Perfecto", "Sobrante Neto", 
@@ -177,7 +189,7 @@ try:
                 pedidos_validos_cas = set(df_sla["Pedido"].dropna().unique())
                 df_rect = df_rect[df_rect["Pedido"].isin(pedidos_validos_cas)]
 
-        # --- FILTRO DE ESTADO DE RECTIFICACIÓN (M / P / R) EN EL SIDEBAR ---
+        # --- FILTRO DE ESTADO DE RECTIFICACIÓN (M / P / R) ---
         if not df_rect.empty and "Estado" in df_rect.columns:
             st.sidebar.markdown("---")
             st.sidebar.header("📋 Estado de Rectificación")
@@ -1063,7 +1075,7 @@ try:
             else:
                 st.info("ℹ️ No existen pedidos de 'Sustitución Distinta Subfamilia' para la selección actual de filtros.")
 
-        # HOJA 5: RECTIFICACIONES POR ÁREA DE SALIDA (Doble gráfico: Pedidos Únicos Rectificados vs Monto Confirmado)
+        # HOJA 5: RECTIFICACIONES POR ÁREA DE SALIDA
         with tab5:
             st.subheader("📦 Análisis de Rectificaciones por Área de Salida")
             st.markdown("Consolidado y auditoría de pedidos rectificados por **Área de Salida** (se excluyen automáticamente las rectificaciones rechazadas en **Estado 'R'**).")
