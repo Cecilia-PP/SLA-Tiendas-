@@ -14,7 +14,7 @@ PATH_PARQUET_RECT = os.path.join(DIR_BASE, "Tablero_Rectificaciones_Detalle.parq
 PATH_PARQUET_SLA = os.path.join(DIR_BASE, "Tablero_SLA_Pedidos.parquet")
 
 print("==================================================================")
-print("🚀 EJECUTANDO ETL, PURGA, CORRECCIÓN DE ÁREA 13 Y RECLASIFICACIÓN BLINDADA UXB")
+print("🚀 EJECUTANDO ETL, PURGA Y CLASIFICACIÓN EXCLUSIVA UXB 100% PUROS")
 print(f"📂 DIRECTORIO BASE: {DIR_BASE}")
 print("==================================================================")
 
@@ -172,7 +172,7 @@ if path_maestro:
     except Exception as e:
         print(f"    ⚠️ Error Maestro: {e}")
 
-# 4.1. CARGAR MAESTRO DE EMPAQUE (UxB 503.csv) CON CONSOLIDACIÓN DE UxM MÁXIMO
+# 4.1. CARGAR MAESTRO DE EMPAQUE (UxB 503.csv)
 archivos_uxb = glob.glob(os.path.join(DIR_DATOS, "*[Uu][Xx][Bb]*.csv")) + glob.glob(os.path.join(DIR_BASE, "*[Uu][Xx][Bb]*.csv"))
 mapa_uxb = {}
 
@@ -189,7 +189,7 @@ if archivos_uxb:
             if c in df_uxb.columns:
                 df_uxb[c] = pd.to_numeric(df_uxb[c].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
                 
-        # Consolidar por SKU seleccionando el valor máximo de UxM para capturar Bultos Master Reales
+        # Consolidar por SKU seleccionando el valor máximo de UxM
         df_uxb_grouped = df_uxb.groupby("SKU_Clean").agg({
             "UxB": "max",
             "UxM": "max",
@@ -326,50 +326,54 @@ if list_rect:
     df_rect_all.to_parquet(PATH_PARQUET_RECT, index=False)
     print(f"    ✓ Archivo Parquet actualizado: {PATH_PARQUET_RECT}")
 
-    # 6. EVALUAR CASUÍSTICA Y SLA
+    # 6. EVALUAR CASUÍSTICA Y SLA CON REGLA PURO MÁSTER
     col_motivo = "Motivo_Clean" if "Motivo_Clean" in df_rect_all.columns else "Motivo"
     df_rect_all["Motivo_Norm"] = df_rect_all[col_motivo].astype(str).str.strip().str.upper()
 
-    def es_error_escala_master(group):
-        """
-        Evalúa si en las rectificaciones del pedido existe un error de escala por Bulto Master.
-        REQUISITO OBLIGATORIO: El artículo DEBE ser un Bulto Master Real (UxM > UxB y UxM > 1.0).
-        """
-        for _, row in group.iterrows():
-            sku = str(row.get(col_art_rect, "")).strip().lstrip("0")
-            unid = float(row.get("Unidades_Num", 0.0))
+    def es_linea_error_master(row):
+        """Evalúa si una línea individual corresponde a una anomalía de Bulto Máster."""
+        sku = str(row.get(col_art_rect, "")).strip().lstrip("0")
+        unid = float(row.get("Unidades_Num", 0.0))
+        es_m_flag = str(row.get("Es_Master", "")).strip().upper() in ["SI", "SÍ"]
+        
+        datos_m = mapa_uxb.get(sku, {})
+        uxb = float(datos_m.get("UxB", 0.0))
+        uxm = float(datos_m.get("UxM", 0.0))
+        
+        if uxm <= 1.0 and not es_m_flag:
+            return False
+        if uxm > 0.0 and uxm <= uxb:
+            return False
+        if uxb > 0.0 and unid == uxb:
+            return False
             
-            datos_m = mapa_uxb.get(sku, {})
-            uxb = float(datos_m.get("UxB", 0.0))
-            uxm = float(datos_m.get("UxM", 0.0))
+        if uxm > 1.0 and unid > 0.0 and (unid == uxm or unid % uxm == 0):
+            return True
             
-            # ⛔ FILTRO DE CONTROL: Si NO es Bulto Master Real (UxM <= UxB), SE OMITE AUTOMÁTICAMENTE
-            if uxm <= uxb or uxm <= 1.0 or unid <= 0.0:
-                continue
+        dif_uxm_uxb = uxm - uxb
+        if dif_uxm_uxb > 0.0 and dif_uxm_uxb != uxb and unid > 0.0:
+            if unid == dif_uxm_uxb or unid % dif_uxm_uxb == 0:
+                return True
                 
-            # 1. Coincidencia con Bulto Master Completo (UxM) o sus múltiplos
-            if unid == uxm or (unid % uxm == 0):
-                return True
-            
-            # 2. Coincidencia con la Diferencia exacta (UxM - UxB) o sus múltiplos
-            dif_uxm_uxb = uxm - uxb
-            if dif_uxm_uxb > 0.0 and (unid == dif_uxm_uxb or (unid % dif_uxm_uxb == 0)):
-                return True
-                    
         return False
 
     pedidos_clasif = []
 
     for ped, group in df_rect_all.groupby("Pedido"):
         tot_lineas = len(group)
+        
+        # Evaluar cuántas líneas del pedido cumplen la regla de Bulto Máster
+        lineas_uxb = sum(es_linea_error_master(row) for _, row in group.iterrows())
+        
         f_group = group[group["Motivo_Norm"] == "F"]
         s_group = group[group["Motivo_Norm"] == "S"]
         
         cant_f = len(f_group)
         cant_s = len(s_group)
         
-        # 🔍 EVALUACIÓN BLINDADA DE ANOMALÍA POR BULTO MASTER REAL
-        if es_error_escala_master(group):
+        # 🎯 REGLA ESTRICTA 100% PURO UXB:
+        # Solo asigna "Faltante UxB" si TODAS las líneas del pedido son desvíos de Bulto Máster
+        if lineas_uxb > 0 and lineas_uxb == tot_lineas:
             cas, pts = "Faltante UxB", 4.0
         elif cant_f > 0 and cant_s > 0:
             if tot_lineas >= 12:
