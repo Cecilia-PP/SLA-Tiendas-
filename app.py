@@ -140,7 +140,7 @@ try:
             if not df_rect.empty and "Gestion" in df_rect.columns:
                 df_rect = df_rect[df_rect["Gestion"].astype(str).isin(gestion_sel)]
 
-        # 3. FILTRO DINÁMICO DE ÁREA DE SALIDA (EXCLUYENDO DE LAS OPCIONES LAS ÁREAS 19 Y 24)
+        # 3. FILTRO DINÁMICO DE ÁREA DE SALIDA
         areas_sla = set(df_sla["Area_Salida"].dropna().astype(str).unique()) if "Area_Salida" in df_sla.columns else set()
         areas_rect = set(df_rect["Area_Salida"].dropna().astype(str).unique()) if not df_rect.empty and "Area_Salida" in df_rect.columns else set()
         
@@ -170,12 +170,12 @@ try:
             if not df_rect.empty and "Tienda" in df_rect.columns:
                 df_rect = df_rect[df_rect["Tienda"].astype(str).isin(tienda_sel)]
 
-        # 6. FILTRO DE CASUÍSTICA
+        # 6. FILTRO DE CASUÍSTICA (ACTUALIZADO CON "Formato no entregado")
         if "Casuistica" in df_sla.columns:
             orden_cas_filtro = [
                 "Pedido Perfecto", "Sobrante Neto", 
                 "Sustitución Misma Subfamilia", "Sustitución Distinta Subfamilia", 
-                "Falta/Sobra", "Faltante Neto", "Faltante UxB", 
+                "Falta/Sobra", "Faltante Neto", "Formato no entregado", "Faltante UxB", 
                 "Etiquetas Cambiadas"
             ]
             casuisticas_presentes = [c for c in orden_cas_filtro if c in df_sla["Casuistica"].dropna().unique()]
@@ -348,13 +348,14 @@ try:
             colores_cas = {
                 "Sobrante Neto": "#0077B6", "Sustitución Misma Subfamilia": "#80ED99",
                 "Sustitución Distinta Subfamilia": "#FF9E00", "Falta/Sobra": "#4CC9F0", 
-                "Faltante Neto": "#E63946", "Faltante UxB": "#7209B7", "Etiquetas Cambiadas": "#2B2D42"
+                "Faltante Neto": "#E63946", "Formato no entregado": "#D90429", "Faltante UxB": "#7209B7", 
+                "Etiquetas Cambiadas": "#2B2D42"
             }
 
             fig_comb = make_subplots(specs=[[{"secondary_y": True}]])
             casuisticas_orden = [
                 "Sobrante Neto", "Sustitución Misma Subfamilia", "Sustitución Distinta Subfamilia", 
-                "Falta/Sobra", "Faltante Neto", "Faltante UxB", "Etiquetas Cambiadas"
+                "Falta/Sobra", "Faltante Neto", "Formato no entregado", "Faltante UxB", "Etiquetas Cambiadas"
             ]
             
             for cas in casuisticas_orden:
@@ -556,7 +557,7 @@ try:
                 }
             )
 
-        # HOJA 2
+        # HOJA 2: CASUÍSTICAS Y MODELO SLA (ACTUALIZADA)
         with tab2:
             st.subheader("📈 Matriz Ejecutiva de Casuísticas por Pedido")
             tot_p = len(df_sla)
@@ -572,7 +573,7 @@ try:
             orden_cas = [
                 "Pedido Perfecto", "Sobrante Neto", 
                 "Sustitución Misma Subfamilia", "Sustitución Distinta Subfamilia", 
-                "Falta/Sobra", "Faltante Neto", "Faltante UxB", 
+                "Falta/Sobra", "Faltante Neto", "Formato no entregado", "Faltante UxB", 
                 "Etiquetas Cambiadas"
             ]
             cas_sum["Casuistica_Cat"] = pd.Categorical(cas_sum["Casuistica"], categories=orden_cas, ordered=True)
@@ -606,6 +607,7 @@ try:
                 {"Casuística Operativa": "Sustitución Distinta Subfamilia", "Descuento Aplicado": "-4.5 Pts", "Puntaje por Pedido": "5.5 / 10", "Simplificado": "Pedido con rectificación de falta y sobra en artículos de distintas subfamilias"},
                 {"Casuística Operativa": "Falta/Sobra", "Descuento Aplicado": "-5.5 Pts", "Puntaje por Pedido": "4.5 / 10", "Simplificado": "Pedido con rectificación de falta y sobra"},
                 {"Casuística Operativa": "Faltante Neto", "Descuento Aplicado": "-6.0 Pts", "Puntaje por Pedido": "4.0 / 10", "Simplificado": "Pedido con rectificación de solo falta"},
+                {"Casuística Operativa": "Formato no entregado", "Descuento Aplicado": "-6.0 Pts", "Puntaje por Pedido": "4.0 / 10", "Simplificado": "Pedido con rectificación de solo falta de más de 10 líneas"},
                 {"Casuística Operativa": "Faltante UxB", "Descuento Aplicado": "-6.0 Pts", "Puntaje por Pedido": "4.0 / 10", "Simplificado": "Pedido con rectificación de falta en bultos Master"},
                 {"Casuística Operativa": "Etiquetas Cambiadas", "Descuento Aplicado": "-10.0 Pts", "Puntaje por Pedido": "0.0 / 10", "Simplificado": "Faltas y sobras simultáneas mayores o iguales a 12 líneas rectificadas"}
             ])
