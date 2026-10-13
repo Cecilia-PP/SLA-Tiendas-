@@ -14,7 +14,7 @@ PATH_PARQUET_RECT = os.path.join(DIR_BASE, "Tablero_Rectificaciones_Detalle.parq
 PATH_PARQUET_SLA = os.path.join(DIR_BASE, "Tablero_SLA_Pedidos.parquet")
 
 print("==================================================================")
-print("🚀 EJECUTANDO ETL, PURGA Y CLASIFICACIÓN EXCLUSIVA UXB 100% PUROS")
+print("🚀 EJECUTANDO ETL CON FALTANTE UXB Y FORMATO NO ENTREGADO (> 10 LÍNEAS)")
 print(f"📂 DIRECTORIO BASE: {DIR_BASE}")
 print("==================================================================")
 
@@ -261,7 +261,7 @@ if list_rect:
     col_alm_r = [c for c in df_rect_all.columns if any(k in c.lower() for k in ["cod. almacen", "almacen", "almacén", "cd"])][0]
     df_rect_all["Almacen"] = df_rect_all[col_alm_r].astype(str).str.strip()
 
-    df_rect_all["Responsable_Tienda"] = df_rect_all["Tienda"].map(mapa_supervisores).fillna("Sin Asignar").replace(["", "nan", "None"], "Sin Asignar")
+    df_rect_all["Responsable_Tienda"] = df_rect_all["Tienda"].map(mapa_supervisores).fillna("Sin Asignar").replace(["", "nan", "None"], "Sin Clasificar")
     df_rect_all["Gestion"] = df_rect_all["Tienda"].map(mapa_gestion).fillna("Sin Clasificar").replace(["", "nan", "None"], "Sin Clasificar")
 
     col_unid = [c for c in ["Unid/Kgs grabados", "Unid_Grabadas", "Unidades Grabadas", "Unid/Kgs abonados"] if c in df_rect_all.columns]
@@ -326,7 +326,7 @@ if list_rect:
     df_rect_all.to_parquet(PATH_PARQUET_RECT, index=False)
     print(f"    ✓ Archivo Parquet actualizado: {PATH_PARQUET_RECT}")
 
-    # 6. EVALUAR CASUÍSTICA Y SLA CON REGLA PURO MÁSTER
+    # 6. EVALUAR CASUÍSTICA Y SLA
     col_motivo = "Motivo_Clean" if "Motivo_Clean" in df_rect_all.columns else "Motivo"
     df_rect_all["Motivo_Norm"] = df_rect_all[col_motivo].astype(str).str.strip().str.upper()
 
@@ -371,8 +371,7 @@ if list_rect:
         cant_f = len(f_group)
         cant_s = len(s_group)
         
-        # 🎯 REGLA ESTRICTA 100% PURO UXB:
-        # Solo asigna "Faltante UxB" si TODAS las líneas del pedido son desvíos de Bulto Máster
+        # 1. FALTANTE UXB (100% de rectificaciones por desvío Máster)
         if lineas_uxb > 0 and lineas_uxb == tot_lineas:
             cas, pts = "Faltante UxB", 4.0
         elif cant_f > 0 and cant_s > 0:
@@ -401,7 +400,11 @@ if list_rect:
             else:
                 cas, pts = "Falta/Sobra", 4.5
         elif cant_f > 0:
-            cas, pts = "Faltante Neto", 4.0
+            # 🆕 REGLA FORMATO NO ENTREGADO: Si el pedido es solo Faltante ('F') y tiene MÁS DE 10 LÍNEAS
+            if cant_f > 10:
+                cas, pts = "Formato no entregado", 4.0
+            else:
+                cas, pts = "Faltante Neto", 4.0
         elif cant_s > 0:
             cas, pts = "Sobrante Neto", 10.0
         else:
