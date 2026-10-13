@@ -14,7 +14,7 @@ PATH_PARQUET_RECT = os.path.join(DIR_BASE, "Tablero_Rectificaciones_Detalle.parq
 PATH_PARQUET_SLA = os.path.join(DIR_BASE, "Tablero_SLA_Pedidos.parquet")
 
 print("==================================================================")
-print("🚀 EJECUTANDO ETL, PURGA Y CORRECCIÓN DE ÁREA 13 EN ALMACÉN 514")
+print("🚀 EJECUTANDO ETL, PURGA, CORRECCIÓN DE ÁREA 13 Y RECLASIFICACIÓN BLINDADA UXB")
 print(f"📂 DIRECTORIO BASE: {DIR_BASE}")
 print("==================================================================")
 
@@ -172,6 +172,35 @@ if path_maestro:
     except Exception as e:
         print(f"    ⚠️ Error Maestro: {e}")
 
+# 4.1. CARGAR MAESTRO DE EMPAQUE (UxB 503.csv) CON CONSOLIDACIÓN DE UxM MÁXIMO
+archivos_uxb = glob.glob(os.path.join(DIR_DATOS, "*[Uu][Xx][Bb]*.csv")) + glob.glob(os.path.join(DIR_BASE, "*[Uu][Xx][Bb]*.csv"))
+mapa_uxb = {}
+
+if archivos_uxb:
+    try:
+        print(f"📌 Cargando maestro de formatos de empaque: {archivos_uxb[0]}")
+        df_uxb = pd.read_csv(archivos_uxb[0], sep=None, engine="python", encoding="latin1", dtype=str, on_bad_lines="skip")
+        df_uxb.columns = df_uxb.columns.str.strip()
+        
+        col_art_uxb = [c for c in df_uxb.columns if any(k in c.lower() for k in ["art", "sku", "cod"])][0]
+        df_uxb["SKU_Clean"] = df_uxb[col_art_uxb].astype(str).str.strip().str.lstrip("0")
+        
+        for c in ["BxF", "UxB", "UxM"]:
+            if c in df_uxb.columns:
+                df_uxb[c] = pd.to_numeric(df_uxb[c].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
+                
+        # Consolidar por SKU seleccionando el valor máximo de UxM para capturar Bultos Master Reales
+        df_uxb_grouped = df_uxb.groupby("SKU_Clean").agg({
+            "UxB": "max",
+            "UxM": "max",
+            "BxF": "max"
+        }).reset_index()
+        
+        mapa_uxb = df_uxb_grouped.set_index("SKU_Clean")[["BxF", "UxB", "UxM"]].to_dict(orient="index")
+        print(f"    ✓ Maestro UxB/UxM consolidado exitosamente con {len(mapa_uxb):,} artículos únicos.")
+    except Exception as e:
+        print(f"    ⚠️ Warning cargando maestro UxB: {e}")
+
 # 5. CARGAR Y FILTRAR RECTIFICACIONES
 archivos_rect = glob.glob(os.path.join(DIR_DATOS, "*[Rr]ectif*.csv")) + glob.glob(os.path.join(DIR_BASE, "*[Rr]ectif*.csv"))
 list_rect = []
@@ -295,11 +324,39 @@ if list_rect:
 
     # 💾 GUARDAR PARQUET 1: DETALLE DE RECTIFICACIONES
     df_rect_all.to_parquet(PATH_PARQUET_RECT, index=False)
-    print(f"   ✓ Archivo Parquet actualizado: {PATH_PARQUET_RECT}")
+    print(f"    ✓ Archivo Parquet actualizado: {PATH_PARQUET_RECT}")
 
     # 6. EVALUAR CASUÍSTICA Y SLA
     col_motivo = "Motivo_Clean" if "Motivo_Clean" in df_rect_all.columns else "Motivo"
     df_rect_all["Motivo_Norm"] = df_rect_all[col_motivo].astype(str).str.strip().str.upper()
+
+    def es_error_escala_master(group):
+        """
+        Evalúa si en las rectificaciones del pedido existe un error de escala por Bulto Master.
+        REQUISITO OBLIGATORIO: El artículo DEBE ser un Bulto Master Real (UxM > UxB y UxM > 1.0).
+        """
+        for _, row in group.iterrows():
+            sku = str(row.get(col_art_rect, "")).strip().lstrip("0")
+            unid = float(row.get("Unidades_Num", 0.0))
+            
+            datos_m = mapa_uxb.get(sku, {})
+            uxb = float(datos_m.get("UxB", 0.0))
+            uxm = float(datos_m.get("UxM", 0.0))
+            
+            # ⛔ FILTRO DE CONTROL: Si NO es Bulto Master Real (UxM <= UxB), SE OMITE AUTOMÁTICAMENTE
+            if uxm <= uxb or uxm <= 1.0 or unid <= 0.0:
+                continue
+                
+            # 1. Coincidencia con Bulto Master Completo (UxM) o sus múltiplos
+            if unid == uxm or (unid % uxm == 0):
+                return True
+            
+            # 2. Coincidencia con la Diferencia exacta (UxM - UxB) o sus múltiplos
+            dif_uxm_uxb = uxm - uxb
+            if dif_uxm_uxb > 0.0 and (unid == dif_uxm_uxb or (unid % dif_uxm_uxb == 0)):
+                return True
+                    
+        return False
 
     pedidos_clasif = []
 
@@ -311,7 +368,10 @@ if list_rect:
         cant_f = len(f_group)
         cant_s = len(s_group)
         
-        if cant_f > 0 and cant_s > 0:
+        # 🔍 EVALUACIÓN BLINDADA DE ANOMALÍA POR BULTO MASTER REAL
+        if es_error_escala_master(group):
+            cas, pts = "Faltante UxB", 4.0
+        elif cant_f > 0 and cant_s > 0:
             if tot_lineas >= 12:
                 cas, pts = "Etiquetas Cambiadas", 0.0
             elif cant_f == cant_s:
@@ -337,11 +397,7 @@ if list_rect:
             else:
                 cas, pts = "Falta/Sobra", 4.5
         elif cant_f > 0:
-            cant_master_f = (f_group["Es_Master"] == "Sí").sum()
-            if cant_master_f > 0 and (cant_master_f / cant_f) >= 0.5:
-                cas, pts = "Faltante UxB", 4.0
-            else:
-                cas, pts = "Faltante Neto", 4.0
+            cas, pts = "Faltante Neto", 4.0
         elif cant_s > 0:
             cas, pts = "Sobrante Neto", 10.0
         else:
@@ -359,7 +415,7 @@ if list_rect:
         
         # 💾 GUARDAR PARQUET 2: RESUMEN SLA
         df_sla.to_parquet(PATH_PARQUET_SLA, index=False)
-        print(f"   ✓ Archivo Parquet actualizado: {PATH_PARQUET_SLA}")
+        print(f"    ✓ Archivo Parquet actualizado: {PATH_PARQUET_SLA}")
 
 print("==================================================================")
 print("✨ PROCESO COMPLETADO Y LOS 2 ARCHIVOS PARQUET FUERON GENERADOS CORRECTAMENTE.")
