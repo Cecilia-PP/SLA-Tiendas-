@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -170,7 +170,7 @@ try:
             if not df_rect.empty and "Tienda" in df_rect.columns:
                 df_rect = df_rect[df_rect["Tienda"].astype(str).isin(tienda_sel)]
 
-        # 6. FILTRO DE CASUÍSTICA (ACTUALIZADO CON "Formato no entregado")
+        # 6. FILTRO DE CASUÍSTICA (GLOBAL SIDEBAR)
         if "Casuistica" in df_sla.columns:
             orden_cas_filtro = [
                 "Pedido Perfecto", "Sobrante Neto", 
@@ -557,7 +557,7 @@ try:
                 }
             )
 
-        # HOJA 2: CASUÍSTICAS Y MODELO SLA (ACTUALIZADA)
+        # HOJA 2: CASUÍSTICAS Y MODELO SLA
         with tab2:
             st.subheader("📈 Matriz Ejecutiva de Casuísticas por Pedido")
             tot_p = len(df_sla)
@@ -613,24 +613,47 @@ try:
             ])
             st.dataframe(matriz_p, hide_index=True)
 
-        # HOJA 3
+        # HOJA 3: AUDITORÍA PRÁCTICA Y DETALLE DE RECTIFICACIONES POR TIENDA (ACTUALIZADA CON FILTRO DESPLEGABLE DE CASUÍSTICA)
         with tab3:
             st.subheader("🏪 Auditoría Práctica y Detalle de Rectificaciones por Tienda")
             
             tiendas_unicas = sorted([str(x) for x in df_sla["Tienda"].dropna().unique() if str(x) != "nan"])
             opciones_tienda = ["Ninguna", "Todas las Tiendas"] + tiendas_unicas
             
-            t_sel = st.selectbox("Seleccionar Tienda a Auditar:", opciones_tienda, index=0)
+            c_tienda, c_cas = st.columns([2, 2])
+            with c_tienda:
+                t_sel = st.selectbox("Seleccionar Tienda a Auditar:", opciones_tienda, index=0)
             
+            # FILTRO DESPLEGABLE DE CASUÍSTICAS EN HOJA 3
+            orden_cas_tab3 = [
+                "Todas las Casuísticas",
+                "Sobrante Neto", "Sustitución Misma Subfamilia", 
+                "Sustitución Distinta Subfamilia", "Falta/Sobra", 
+                "Faltante Neto", "Formato no entregado", "Faltante UxB", 
+                "Etiquetas Cambiadas"
+            ]
+            casuisticas_presentes_tab3 = [c for c in orden_cas_tab3 if c == "Todas las Casuísticas" or c in df_sla["Casuistica"].dropna().unique()]
+            
+            with c_cas:
+                cas_sel_tab3 = st.selectbox("Filtrar por Casuística / Estado Pedido:", casuisticas_presentes_tab3, index=0)
+
             if t_sel == "Ninguna":
                 st.info("👈 Selecciona una **Tienda** específica o la opción **'Todas las Tiendas'** para desplegar el resumen y detalle de rectificaciones.")
             else:
+                # 1. Filtrado por Tienda
                 if t_sel == "Todas las Tiendas":
                     df_aud_sla = df_sla.copy()
                     df_aud_rect = df_rect.copy() if not df_rect.empty else pd.DataFrame()
                 else:
                     df_aud_sla = df_sla[df_sla["Tienda"].astype(str) == str(t_sel)].copy()
                     df_aud_rect = df_rect[df_rect["Tienda"].astype(str) == str(t_sel)].copy() if not df_rect.empty else pd.DataFrame()
+
+                # 2. Filtrado por Casuística Seleccionada en Hoja 3
+                if cas_sel_tab3 != "Todas las Casuísticas":
+                    df_aud_sla = df_aud_sla[df_aud_sla["Casuistica"] == cas_sel_tab3]
+                    if not df_aud_rect.empty:
+                        pedidos_cas_filtrados = set(df_aud_sla["Pedido"].dropna().unique())
+                        df_aud_rect = df_aud_rect[df_aud_rect["Pedido"].isin(pedidos_cas_filtrados)]
 
                 tot_p_t = len(df_aud_sla)
                 tot_p_rect_t = (df_aud_sla["Casuistica"] != "Pedido Perfecto").sum()
