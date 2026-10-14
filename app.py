@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -348,7 +349,7 @@ try:
             colores_cas = {
                 "Sobrante Neto": "#0077B6", "Sustitución Misma Subfamilia": "#80ED99",
                 "Sustitución Distinta Subfamilia": "#FF9E00", "Falta/Sobra": "#4CC9F0", 
-                "Faltante Neto": "#E63946", "Formato no entregado": "#D90429", "Faltante UxB": "#7209B7", 
+                "Faltante Neto": "#E63946", "Formato no entregado": "#FFE066", "Faltante UxB": "#7209B7", 
                 "Etiquetas Cambiadas": "#2B2D42"
             }
 
