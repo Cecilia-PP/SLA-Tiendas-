@@ -20,6 +20,43 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ==============================================================================
+# MÓDULO DE AUTENTICACIÓN (LOGIN)
+# ==============================================================================
+USUARIO_CORRECTO = "Tiendas_SLA"
+PASSWORD_CORRECTO = "SLA1234"
+
+if "autenticado" not in st.session_state:
+    st.session_state["autenticado"] = False
+
+def login():
+    st.markdown("### 🔐 Acceso al Tablero SLA y Satisfacción de Tienda")
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        with st.form("form_login"):
+            st.subheader("Iniciar Sesión")
+            usuario_input = st.text_input("Usuario")
+            password_input = st.text_input("Contraseña", type="password")
+            submit_button = st.form_submit_button("Ingresar 🚀")
+
+            if submit_button:
+                if usuario_input.strip() == USUARIO_CORRECTO and password_input.strip() == PASSWORD_CORRECTO:
+                    st.session_state["autenticado"] = True
+                    st.success("¡Acceso concedido!")
+                    st.rerun()
+                else:
+                    st.error("⚠️ Usuario o contraseña incorrectos")
+
+if not st.session_state["autenticado"]:
+    login()
+    st.stop()
+
+# Botón de cerrar sesión en la barra lateral
+st.sidebar.button("🔒 Cerrar Sesión", on_click=lambda: st.session_state.update({"autenticado": False}))
+
+# ==============================================================================
+# APLICACIÓN PRINCIPAL
+# ==============================================================================
 st.title("📦 Tablero SLA y Satisfacción de Tienda")
 
 def corregir_encoding_texto(texto):
@@ -614,7 +651,7 @@ try:
             ])
             st.dataframe(matriz_p, hide_index=True)
 
-        # HOJA 3: AUDITORÍA PRÁCTICA Y DETALLE DE RECTIFICACIONES POR TIENDA (ACTUALIZADA CON FILTRO DESPLEGABLE DE CASUÍSTICA)
+        # HOJA 3: AUDITORÍA PRÁCTICA Y DETALLE DE RECTIFICACIONES POR TIENDA
         with tab3:
             st.subheader("🏪 Auditoría Práctica y Detalle de Rectificaciones por Tienda")
             
