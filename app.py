@@ -291,12 +291,13 @@ try:
                 df_rect = df_rect[~df_rect["Tienda"].isin(tiendas_pocas_compras)]
             st.sidebar.warning(f"Excluidas {len(tiendas_pocas_compras):,} tiendas con < {umbral_min_pedidos} pedidos.")
 
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
             "📊 1. Ranking SLA por Almacén y Tienda",
             "📈 2. Casuísticas y Modelo SLA",
             "🏪 3. Auditoría Práctica por Tienda",
             "🔄 4. Análisis de Sustituciones",
-            "📦 5. Rectificaciones por Área de Salida"
+            "📦 5. Rectificaciones por Área de Salida",
+            "🧩 6. Auditoría de Unidades Sueltas"
         ])
 
         # HOJA 1
@@ -435,6 +436,20 @@ try:
             st.markdown("---")
             st.markdown("### 🏪 Detalle por Franquiciado / Supervisor")
 
+            if "Responsable_Tienda" in df_sla.columns:
+                lista_supervisores = ["Todos los Franquiciados / Supervisores"] + sorted([str(x) for x in df_sla["Responsable_Tienda"].dropna().unique()])
+                sup_sel_hoja1 = st.selectbox("Filtrar por Franquiciado / Supervisor (Hoja 1):", lista_supervisores, index=0)
+            else:
+                sup_sel_hoja1 = "Todos los Franquiciados / Supervisores"
+
+            df_sla_h1_resp = df_sla.copy()
+            df_rect_h1_resp = df_rect.copy() if not df_rect.empty else pd.DataFrame()
+
+            if sup_sel_hoja1 != "Todos los Franquiciados / Supervisores":
+                df_sla_h1_resp = df_sla_h1_resp[df_sla_h1_resp["Responsable_Tienda"].astype(str) == str(sup_sel_hoja1)]
+                if not df_rect_h1_resp.empty and "Responsable_Tienda" in df_rect_h1_resp.columns:
+                    df_rect_h1_resp = df_rect_h1_resp[df_rect_h1_resp["Responsable_Tienda"].astype(str) == str(sup_sel_hoja1)]
+
             col_tiendas_lbl = "Total\nTiendas"
             col_totales_lbl = "Pedidos\nTotales"
             col_rectif_lbl = "Pedidos con\nRectificaciones"
@@ -442,17 +457,17 @@ try:
             col_part_lin_lbl = "% Líneas\nConfirmadas"
             col_sla_lbl = "Puntaje SLA\n(1 a 10)"
 
-            group_cols_resp = ["Responsable_Tienda"] if "Responsable_Tienda" in df_sla.columns else ["Tienda"]
-            tb_resp_base = df_sla.groupby(group_cols_resp, as_index=False).agg(
+            group_cols_resp = ["Responsable_Tienda"] if "Responsable_Tienda" in df_sla_h1_resp.columns else ["Tienda"]
+            tb_resp_base = df_sla_h1_resp.groupby(group_cols_resp, as_index=False).agg(
                 Total_Tiendas=("Tienda", "nunique"), 
                 Pedidos_Totales=("Pedido", "count"),
                 Pedidos_Con_Rectificaciones=("Casuistica", lambda x: (x != "Pedido Perfecto").sum()), 
                 Puntos_Obtenidos=("Puntos_Obtenidos", "sum")
             )
 
-            if not df_rect.empty and "Responsable_Tienda" in df_rect.columns:
-                col_est = "Estado_Clean" if "Estado_Clean" in df_rect.columns else ("Estado" if "Estado" in df_rect.columns else "Pedido")
-                tb_rect_counts = df_rect.groupby("Responsable_Tienda", as_index=False).agg(
+            if not df_rect_h1_resp.empty and "Responsable_Tienda" in df_rect_h1_resp.columns:
+                col_est = "Estado_Clean" if "Estado_Clean" in df_rect_h1_resp.columns else ("Estado" if "Estado" in df_rect_h1_resp.columns else "Pedido")
+                tb_rect_counts = df_rect_h1_resp.groupby("Responsable_Tienda", as_index=False).agg(
                     Lineas_Grabadas_Totales=("Pedido", "count"),
                     Lineas_Confirmadas_M=(col_est, lambda x: (x.astype(str).str.strip().str.upper() == "M").sum() if col_est != "Pedido" else len(x))
                 )
@@ -468,7 +483,7 @@ try:
             tb_resp["% Líneas Confirmadas"] = (tb_resp["Lineas_Confirmadas_M"] / tb_resp["Lineas_Grabadas_Totales"] * 100.0).fillna(0.0)
 
             tb_resp_sorted = tb_resp.sort_values(by="Puntaje SLA", ascending=True).reset_index(drop=True)
-            tot_tiendas_global = df_sla["Tienda"].nunique() if "Tienda" in df_sla.columns else 0
+            tot_tiendas_global = df_sla_h1_resp["Tienda"].nunique() if "Tienda" in df_sla_h1_resp.columns else 0
             tot_lin_grabadas_global = tb_resp["Lineas_Grabadas_Totales"].sum()
             tot_lin_confirmadas_global = tb_resp["Lineas_Confirmadas_M"].sum()
             pct_lineas_conf_global = (tot_lin_confirmadas_global / tot_lin_grabadas_global * 100.0) if tot_lin_grabadas_global > 0 else 0.0
@@ -818,7 +833,7 @@ try:
                     if col_motivo:
                         df_aud_rect["Factor_Signo"] = df_aud_rect[col_motivo].astype(str).str.strip().str.upper().apply(lambda x: -1.0 if x == "S" else 1.0)
                     else:
-                        df_aud_rect["Factor_Signo"] = 1.0
+                        df_aud_rect["Factor_Signo"] = -1.0
 
                     df_aud_rect["Monto_Signed"] = df_aud_rect["Monto_Rectif"] * df_aud_rect["Factor_Signo"]
 
@@ -1164,12 +1179,12 @@ try:
 
                 df_r_area["Estado_Norm"] = df_r_area["Estado"].astype(str).str.strip().str.upper() if "Estado" in df_r_area.columns else "M"
 
-                df_r_area["Monto_Falta"] = df_r_area.apply(lambda r: float(r["Monto_Rectif"]) if r["Motivo_Norm"] == "F" else 0.0, axis=1)
-                df_r_area["Monto_Sobra"] = df_r_area.apply(lambda r: float(r["Monto_Rectif"]) if r["Motivo_Norm"] == "S" else 0.0, axis=1)
-                df_r_area["Monto_Neto"] = df_r_area["Monto_Falta"] - df_r_area["Monto_Sobra"]
+                df_r_area["Monto_Falta"] = df_r_area.apply(lambda r: abs(float(r["Monto_Rectif"])) if r["Motivo_Norm"] == "F" else 0.0, axis=1)
+                df_r_area["Monto_Sobra"] = df_r_area.apply(lambda r: -abs(float(r["Monto_Rectif"])) if r["Motivo_Norm"] == "S" else 0.0, axis=1)
+                df_r_area["Monto_Neto"] = df_r_area["Monto_Falta"] + df_r_area["Monto_Sobra"]
                 
-                # MONTO CONFIRMADO SOLO ESTADO 'M'
-                df_r_area["Monto_Confirmado"] = df_r_area.apply(lambda r: (r["Monto_Falta"] - r["Monto_Sobra"]) if r["Estado_Norm"] == "M" else 0.0, axis=1)
+                # MONTO CONFIRMADO SOLO ESTADO 'M' (Faltas + / Sobras -)
+                df_r_area["Monto_Confirmado"] = df_r_area.apply(lambda r: (r["Monto_Falta"] + r["Monto_Sobra"]) if r["Estado_Norm"] == "M" else 0.0, axis=1)
 
                 tot_areas_unicas = df_r_area["Area_Salida"].nunique()
                 tot_pedidos_afect_area = df_r_area["Pedido"].nunique()
@@ -1325,6 +1340,137 @@ try:
                 )
             else:
                 st.info("ℹ️ No hay rectificaciones registradas para el análisis por Área de Salida.")
+
+        # HOJA 6: AUDITORÍA DE UNIDADES SUELTAS (FUERA DE CLASIFICACIÓN SLA)
+        with tab6:
+            st.subheader("🧩 Análisis de Unidades Sueltas (Rectificaciones Menores a 1 Bulto Común - UxB)")
+            st.markdown("Auditoría independiente fuera de la clasificación de SLA para identificar aquellas **líneas rectificadas cuya cantidad enviada o reclamada es menor a un bulto cerrado** (`Unidades < UxB`). Permite auditar la incidencia de preparación por unidades sueltas por tienda y sector.")
+
+            if not df_rect.empty:
+                df_sueltas = df_rect.copy()
+                
+                # Excluir rectificaciones rechazadas 'R'
+                if "Estado" in df_sueltas.columns:
+                    df_sueltas = df_sueltas[df_sueltas["Estado"] != "R"].copy()
+
+                col_art_s = "Artículo" if "Artículo" in df_sueltas.columns else ("SKU" if "SKU" in df_sueltas.columns else "Producto")
+                
+                # Si 'Es_Unidad_Suelta' no viniera calculada desde el parquet, la calculamos dinámicamente
+                if "Es_Unidad_Suelta" not in df_sueltas.columns:
+                    col_unid_s = "Unidades_Num" if "Unidades_Num" in df_sueltas.columns else "Pedido"
+                    col_uxb_s = "UxB" if "UxB" in df_sueltas.columns else None
+                    if col_uxb_s and col_unid_s != "Pedido":
+                        df_sueltas["Es_Unidad_Suelta"] = (df_sueltas["UxB"] > 1.0) & (df_sueltas["Unidades_Num"] > 0.0) & (df_sueltas["Unidades_Num"] < df_sueltas["UxB"])
+                    else:
+                        df_sueltas["Es_Unidad_Suelta"] = False
+
+                # Filtrar solo las líneas de Unidades Sueltas
+                df_sueltas_only = df_sueltas[df_sueltas["Es_Unidad_Suelta"] == True].copy()
+
+                tot_lineas_sueltas = len(df_sueltas_only)
+                tot_pedidos_sueltas = df_sueltas_only["Pedido"].nunique() if not df_sueltas_only.empty else 0
+                tot_tiendas_sueltas = df_sueltas_only["Tienda"].nunique() if not df_sueltas_only.empty else 0
+                tot_monto_sueltas = df_sueltas_only["Monto_Rectif"].sum() if "Monto_Rectif" in df_sueltas_only.columns else 0.0
+
+                s1, s2, s3, s4 = st.columns(4)
+                s1.metric("🧩 Líneas de Unidades Sueltas", f"{tot_lineas_sueltas:,}")
+                s2.metric("📦 Pedidos Involucrados", f"{tot_pedidos_sueltas:,}")
+                s3.metric("🏪 Tiendas Afectadas", f"{tot_tiendas_sueltas:,}")
+                s4.metric("💰 Impacto Económico ($)", f"${tot_monto_sueltas:,.2f}")
+
+                st.markdown("---")
+
+                if not df_sueltas_only.empty:
+                    st.markdown("### 🏆 Top 15 Tiendas con Mayor Cantidad de Líneas de Unidades Sueltas")
+
+                    group_tienda_sueltas = df_sueltas_only.groupby("Tienda", as_index=False).agg(
+                        Líneas_Sueltas=("Pedido", "count"),
+                        Pedidos_Afectados=("Pedido", "nunique"),
+                        Unidades_Sueltas_Totales=("Unidades_Num", "sum") if "Unidades_Num" in df_sueltas_only.columns else ("Pedido", "count"),
+                        Monto_Total_Suelto=("Monto_Rectif", "sum") if "Monto_Rectif" in df_sueltas_only.columns else ("Pedido", "count")
+                    ).sort_values(by="Líneas_Sueltas", ascending=False).reset_index(drop=True)
+
+                    # Formato y visualización
+                    top15_sueltas = group_tienda_sueltas.head(15).copy()
+
+                    cols_top_sueltas = ["Tienda", "Líneas_Sueltas", "Pedidos_Afectados", "Unidades_Sueltas_Totales", "Monto_Total_Suelto"]
+                    top15_sueltas_disp = top15_sueltas[cols_top_sueltas].rename(columns={
+                        "Líneas_Sueltas": "Líneas Sueltas (< 1 UxB)",
+                        "Pedidos_Afectados": "Pedidos Afectados",
+                        "Unidades_Sueltas_Totales": "Unidades Sueltas Totales",
+                        "Monto_Total_Suelto": "Monto Total ($)"
+                    })
+
+                    st.dataframe(
+                        top15_sueltas_disp,
+                        hide_index=True,
+                        column_config={
+                            "Tienda": st.column_config.Column("Tienda", width="small"),
+                            "Líneas Sueltas (< 1 UxB)": st.column_config.NumberColumn("Líneas Sueltas (< 1 UxB)", format="%d", width="medium"),
+                            "Pedidos Afectados": st.column_config.NumberColumn("Pedidos Afectados", format="%d", width="medium"),
+                            "Unidades Sueltas Totales": st.column_config.NumberColumn("Unidades Sueltas Totales", format="%.0f", width="medium"),
+                            "Monto Total ($)": st.column_config.NumberColumn("Monto Total ($)", format="$%.2f", width="medium")
+                        }
+                    )
+
+                    st.markdown("---")
+                    st.markdown("### 🔎 Detalle Individual de Líneas Rectificadas como Unidades Sueltas")
+
+                    tiendas_sueltas_opt = ["Todas las Tiendas"] + sorted([str(x) for x in df_sueltas_only["Tienda"].unique()])
+                    t_suelta_sel = st.selectbox("Seleccionar Tienda para Auditar Unidades Sueltas:", tiendas_sueltas_opt, index=0)
+
+                    df_det_sueltas = df_sueltas_only.copy()
+                    if t_suelta_sel != "Todas las Tiendas":
+                        df_det_sueltas = df_det_sueltas[df_det_sueltas["Tienda"].astype(str) == str(t_suelta_sel)]
+
+                    busqueda_ped_suelta = st.text_input("🔍 Filtrar por Número de Pedido (Unidades Sueltas):", "")
+                    if busqueda_ped_suelta:
+                        df_det_sueltas = df_det_sueltas[
+                            df_det_sueltas["Pedido"].astype(str).str.contains(busqueda_ped_suelta.strip(), case=False, na=False)
+                        ]
+
+                    col_desc_s = "Descripción" if "Descripción" in df_det_sueltas.columns else "Producto"
+
+                    cols_sueltas_disp = [
+                        "Almacen", "Tienda", "Pedido", "Area_Salida", col_art_s, col_desc_s, 
+                        "Familia", "Unidades_Num", "UxB", "Motivo", "Procedencia", "Estado", "Monto_Rectif"
+                    ]
+                    cols_exist_s = [c for c in cols_sueltas_disp if c in df_det_sueltas.columns]
+
+                    df_sueltas_det_clean = df_det_sueltas[cols_exist_s].copy()
+                    df_sueltas_det_clean = df_sueltas_det_clean.rename(columns={
+                        "Almacen": "Almacén",
+                        "Area_Salida": "Área de Salida",
+                        col_art_s: "SKU",
+                        col_desc_s: "Producto / Descripción",
+                        "Unidades_Num": "Unid. Rectificadas",
+                        "UxB": "Cant. por Bulto (UxB)",
+                        "Monto_Rectif": "Monto ($)"
+                    })
+
+                    st.dataframe(
+                        df_sueltas_det_clean,
+                        hide_index=True,
+                        column_config={
+                            "Almacén": st.column_config.Column("Almacén", width="small"),
+                            "Tienda": st.column_config.Column("Tienda", width="small"),
+                            "Pedido": st.column_config.Column("Pedido", width="medium"),
+                            "Área de Salida": st.column_config.Column("Área de Salida", width="medium"),
+                            "SKU": st.column_config.Column("SKU", width="small"),
+                            "Producto / Descripción": st.column_config.Column("Producto / Descripción", width="large"),
+                            "Familia": st.column_config.Column("Familia", width="medium"),
+                            "Unid. Rectificadas": st.column_config.NumberColumn("Unid. Rectificadas", format="%.0f", width="small"),
+                            "Cant. por Bulto (UxB)": st.column_config.NumberColumn("Cant. por Bulto (UxB)", format="%.0f", width="small"),
+                            "Motivo": st.column_config.Column("Motivo", width="small"),
+                            "Procedencia": st.column_config.Column("Procedencia", width="small"),
+                            "Estado": st.column_config.Column("Estado", width="small"),
+                            "Monto ($)": st.column_config.NumberColumn("Monto ($)", format="$%.2f", width="medium")
+                        }
+                    )
+                else:
+                    st.success("🎉 No se registraron rectificaciones de unidades sueltas (< 1 UxB) para la selección actual.")
+            else:
+                st.info("ℹ️ No hay rectificaciones disponibles para auditar unidades sueltas.")
 
 except Exception as e:
     st.error(f"Error cargando el tablero: {e}")

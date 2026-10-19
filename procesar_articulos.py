@@ -1,4 +1,5 @@
-﻿import pandas as pd
+﻿# -*- coding: utf-8 -*-
+import pandas as pd
 import glob
 import os
 
@@ -321,6 +322,23 @@ if list_rect:
             )
 
     print(f"✨ Inferencia completada: {cant_sin_area_ini:,} líneas procesadas mediante (Almacén + Artículo / Familia).")
+
+    # ⚡ ASIGNAR DATOS DE EMPAQUE (UxB, UxM) Y IDENTIFICAR UNIDADES SUELTAS
+    def obtener_uxb(sku):
+        sku_c = str(sku).strip().lstrip("0")
+        d = mapa_uxb.get(sku_c, {})
+        return float(d.get("UxB", 0.0))
+
+    def obtener_uxm(sku):
+        sku_c = str(sku).strip().lstrip("0")
+        d = mapa_uxb.get(sku_c, {})
+        return float(d.get("UxM", 0.0))
+
+    df_rect_all["UxB"] = df_rect_all[col_art_rect].apply(obtener_uxb)
+    df_rect_all["UxM"] = df_rect_all[col_art_rect].apply(obtener_uxm)
+    
+    # Marcador de Unidad Suelta: Unidades_Num < UxB (cuando UxB > 1)
+    df_rect_all["Es_Unidad_Suelta"] = (df_rect_all["UxB"] > 1.0) & (df_rect_all["Unidades_Num"] > 0.0) & (df_rect_all["Unidades_Num"] < df_rect_all["UxB"])
 
     # 💾 GUARDAR PARQUET 1: DETALLE DE RECTIFICACIONES
     df_rect_all.to_parquet(PATH_PARQUET_RECT, index=False)
