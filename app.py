@@ -192,6 +192,8 @@ try:
             if not df_rect.empty and "Area_Salida" in df_rect.columns:
                 df_rect = df_rect[df_rect["Area_Salida"].astype(str).isin(area_sel)]
 
+
+
         # 4. FILTRO DE FRANQUICIADO / SUPERVISOR
         if "Responsable_Tienda" in df_sla.columns and df_sla["Responsable_Tienda"].notna().any():
             responsables = sorted([str(x) for x in df_sla["Responsable_Tienda"].dropna().unique()])
@@ -297,7 +299,7 @@ try:
             "🏪 3. Auditoría Práctica por Tienda",
             "🔄 4. Análisis de Sustituciones",
             "📦 5. Rectificaciones por Área de Salida",
-            "🧩 6. Auditoría de Unidades Sueltas"
+            "🧩 6. Análisis de Unidades Sueltas"
         ])
 
         # HOJA 1
@@ -833,7 +835,7 @@ try:
                     if col_motivo:
                         df_aud_rect["Factor_Signo"] = df_aud_rect[col_motivo].astype(str).str.strip().str.upper().apply(lambda x: -1.0 if x == "S" else 1.0)
                     else:
-                        df_aud_rect["Factor_Signo"] = -1.0
+                        df_aud_rect["Factor_Signo"] = 1.0
 
                     df_aud_rect["Monto_Signed"] = df_aud_rect["Monto_Rectif"] * df_aud_rect["Factor_Signo"]
 
