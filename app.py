@@ -51,7 +51,6 @@ if not st.session_state["autenticado"]:
     login()
     st.stop()
 
-# Botón de cerrar sesión en la barra lateral
 st.sidebar.button("🔒 Cerrar Sesión", on_click=lambda: st.session_state.update({"autenticado": False}))
 
 # ==============================================================================
@@ -156,8 +155,53 @@ def cargar_datos_sla():
         return df_sla, df_rect
     return pd.DataFrame(), pd.DataFrame()
 
+@st.cache_data
+def cargar_datos_anulaciones():
+    if os.path.exists("Tablero_Anulaciones_Detalle.parquet"):
+        return pd.read_parquet("Tablero_Anulaciones_Detalle.parquet")
+    
+    archivos = [f for f in os.listdir(".") if ("anula" in f.lower() or "causa" in f.lower()) and f.endswith(".csv")]
+    if not archivos and os.path.exists("Datos_mensuales"):
+        archivos = [os.path.join("Datos_mensuales", f) for f in os.listdir("Datos_mensuales") if ("anula" in f.lower() or "causa" in f.lower()) and f.endswith(".csv")]
+    
+    if archivos:
+        try:
+            df_a = pd.read_csv(archivos[0], sep=None, engine="python", encoding="latin1", dtype=str, on_bad_lines="skip")
+            df_a.columns = df_a.columns.str.strip()
+            
+            mapa = {}
+            for c in df_a.columns:
+                clow = c.lower()
+                if "almac" in clow: mapa[c] = "Almacen"
+                elif "tienda" in clow or "sucursal" in clow: mapa[c] = "Tienda"
+                elif "pedido" in clow: mapa[c] = "Pedido"
+                elif "nota" in clow or "nro" in clow: mapa[c] = "Nota_Nro"
+                elif "fch. modif" in clow or "fch_modif" in clow or "fecha modif" in clow: mapa[c] = "Fecha_Modif"
+                elif "fech" in clow and "modif" not in clow: mapa[c] = "Fecha"
+                elif "tipo" in clow or "motivo_rect" in clow: mapa[c] = "Tipo"
+                elif "cnt" in clow or "blt" in clow or "bulto" in clow or "cant" in clow: mapa[c] = "Cant_Blt"
+                elif "imp" in clow or "monto" in clow or "importe" in clow: mapa[c] = "Monto"
+                elif "estado rp" in clow: mapa[c] = "Estado_RP"
+                elif "estado" in clow: mapa[c] = "Estado"
+                elif "motivo" in clow or "causa" in clow: mapa[c] = "Causa_Anulacion"
+                elif "lote" in clow or "rpa" in clow: mapa[c] = "Lote_RPA"
+
+            df_a = df_a.rename(columns=mapa)
+            if "Pedido" in df_a.columns: df_a["Pedido"] = df_a["Pedido"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0")
+            if "Tienda" in df_a.columns: df_a["Tienda"] = df_a["Tienda"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0")
+            if "Almacen" in df_a.columns: df_a["Almacen"] = df_a["Almacen"].astype(str).str.strip()
+            if "Monto" in df_a.columns: df_a["Monto"] = pd.to_numeric(df_a["Monto"].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
+            if "Cant_Blt" in df_a.columns: df_a["Cant_Blt"] = pd.to_numeric(df_a["Cant_Blt"].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
+            
+            return df_a
+        except Exception as e:
+            print(f"Error cargando respaldo anulaciones: {e}")
+            
+    return pd.DataFrame()
+
 try:
     df_sla, df_rect = cargar_datos_sla()
+    df_anul = cargar_datos_anulaciones()
 
     if not df_sla.empty:
         st.sidebar.header("🔍 Filtros de Búsqueda")
@@ -191,8 +235,6 @@ try:
                 df_sla = df_sla[df_sla["Area_Salida"].astype(str).isin(area_sel)]
             if not df_rect.empty and "Area_Salida" in df_rect.columns:
                 df_rect = df_rect[df_rect["Area_Salida"].astype(str).isin(area_sel)]
-
-
 
         # 4. FILTRO DE FRANQUICIADO / SUPERVISOR
         if "Responsable_Tienda" in df_sla.columns and df_sla["Responsable_Tienda"].notna().any():
@@ -293,13 +335,14 @@ try:
                 df_rect = df_rect[~df_rect["Tienda"].isin(tiendas_pocas_compras)]
             st.sidebar.warning(f"Excluidas {len(tiendas_pocas_compras):,} tiendas con < {umbral_min_pedidos} pedidos.")
 
-        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
             "📊 1. Ranking SLA por Almacén y Tienda",
             "📈 2. Casuísticas y Modelo SLA",
             "🏪 3. Auditoría Práctica por Tienda",
             "🔄 4. Análisis de Sustituciones",
             "📦 5. Rectificaciones por Área de Salida",
-            "🧩 6. Análisis de Unidades Sueltas"
+            "🧩 6. Análisis de Unidades Sueltas",
+            "❌ 7. Análisis de Rectificaciones Anuladas"
         ])
 
         # HOJA 1
@@ -452,12 +495,12 @@ try:
                 if not df_rect_h1_resp.empty and "Responsable_Tienda" in df_rect_h1_resp.columns:
                     df_rect_h1_resp = df_rect_h1_resp[df_rect_h1_resp["Responsable_Tienda"].astype(str) == str(sup_sel_hoja1)]
 
-            col_tiendas_lbl = "Total\nTiendas"
-            col_totales_lbl = "Pedidos\nTotales"
-            col_rectif_lbl = "Pedidos con\nRectificaciones"
-            col_lin_lbl = "Líneas\nRectificadas"
-            col_part_lin_lbl = "% Líneas\nConfirmadas"
-            col_sla_lbl = "Puntaje SLA\n(1 a 10)"
+            col_tiendas_lbl = "Total\\nTiendas"
+            col_totales_lbl = "Pedidos\\nTotales"
+            col_rectif_lbl = "Pedidos con\\nRectificaciones"
+            col_lin_lbl = "Líneas\\nRectificadas"
+            col_part_lin_lbl = "% Líneas\\nConfirmadas"
+            col_sla_lbl = "Puntaje SLA\\n(1 a 10)"
 
             group_cols_resp = ["Responsable_Tienda"] if "Responsable_Tienda" in df_sla_h1_resp.columns else ["Tienda"]
             tb_resp_base = df_sla_h1_resp.groupby(group_cols_resp, as_index=False).agg(
@@ -1473,6 +1516,181 @@ try:
                     st.success("🎉 No se registraron rectificaciones de unidades sueltas (< 1 UxB) para la selección actual.")
             else:
                 st.info("ℹ️ No hay rectificaciones disponibles para auditar unidades sueltas.")
+
+        # HOJA 7: ANÁLISIS DE RECTIFICACIONES ANULADAS (ESTADO R)
+        with tab7:
+            st.subheader("❌ Análisis de Rectificaciones Anuladas / Rechazadas (Estado R)")
+            st.markdown("Auditoría detallada de las rectificaciones que fueron **anuladas o rechazadas** en el sistema, analizando las causas registradas (*Foto, Unidades, Incidencia, Auditado, Errores/Irregulares, Otros, etc.*) y su impacto por tienda y pedido.")
+
+            if not df_anul.empty:
+                df_a_view = df_anul.copy()
+
+                # Aplicar filtros globales de Sidebar a Anulaciones (si existen columnas)
+                if "Almacen" in df_a_view.columns and 'almacen_sel' in locals():
+                    df_a_view = df_a_view[df_a_view["Almacen"].astype(str).isin(almacen_sel)]
+
+                if "Gestion" in df_a_view.columns and 'gestion_sel' in locals():
+                    df_a_view = df_a_view[df_a_view["Gestion"].astype(str).isin(gestion_sel)]
+
+                if "Tienda" in df_a_view.columns and 'tienda_sel' in locals():
+                    df_a_view = df_a_view[df_a_view["Tienda"].astype(str).isin(tienda_sel)]
+
+                if "Responsable_Tienda" in df_a_view.columns and 'resp_sel' in locals():
+                    df_a_view = df_a_view[df_a_view["Responsable_Tienda"].astype(str).isin(resp_sel)]
+
+                # Convención de signos: Falta = +, Sobra = -
+                if "Tipo" in df_a_view.columns and "Monto" in df_a_view.columns:
+                    df_a_view["Factor_Signo"] = df_a_view["Tipo"].astype(str).str.strip().str.capitalize().apply(lambda x: -1.0 if "Sobra" in x or x == "S" else 1.0)
+                    df_a_view["Monto_Signed"] = df_a_view["Monto"] * df_a_view["Factor_Signo"]
+                else:
+                    df_a_view["Monto_Signed"] = df_a_view["Monto"] if "Monto" in df_a_view.columns else 0.0
+
+                tot_lin_anul = len(df_a_view)
+                tot_ped_anul = df_a_view["Pedido"].nunique() if "Pedido" in df_a_view.columns else 0
+                tot_tien_anul = df_a_view["Tienda"].nunique() if "Tienda" in df_a_view.columns else 0
+                tot_monto_anul = df_a_view["Monto_Signed"].sum()
+
+                u1, u2, u3, u4 = st.columns(4)
+                u1.metric("❌ Líneas Anuladas Totales", f"{tot_lin_anul:,}")
+                u2.metric("📦 Pedidos Afectados", f"{tot_ped_anul:,}")
+                u3.metric("🏪 Tiendas Involucradas", f"{tot_tien_anul:,}")
+                u4.metric("💰 Importe Total Anulado ($)", f"${tot_monto_anul:,.2f}")
+
+                st.markdown("---")
+
+                # Gráfico y Resumen por Causa de Anulación
+                col_causa = "Causa_Anulacion" if "Causa_Anulacion" in df_a_view.columns else ("Motivo" if "Motivo" in df_a_view.columns else None)
+                if col_causa:
+                    col_g_a1, col_g_a2 = st.columns([1, 1])
+                    
+                    df_causas_grp = df_a_view.groupby(col_causa, as_index=False).agg(
+                        Líneas_Anuladas=("Pedido", "count"),
+                        Pedidos_Afectados=("Pedido", "nunique") if "Pedido" in df_a_view.columns else ("Almacen", "count"),
+                        Monto_Total=("Monto_Signed", "sum")
+                    ).sort_values(by="Líneas_Anuladas", ascending=False).reset_index(drop=True)
+
+                    with col_g_a1:
+                        fig_causas = px.bar(
+                            df_causas_grp, x=col_causa, y="Líneas_Anuladas",
+                            color=col_causa, text="Líneas_Anuladas",
+                            title="<b>Cantidad de Líneas Anuladas por Causa de Anulación</b>"
+                        )
+                        fig_causas.update_traces(textposition='outside')
+                        fig_causas.update_layout(
+                            xaxis_title="Causa / Motivo de Anulación", yaxis_title="Cantidad de Líneas",
+                            height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                            showlegend=False
+                        )
+                        st.plotly_chart(fig_causas, use_container_width=True)
+
+                    with col_g_a2:
+                        st.markdown("#### 📋 Resumen por Causa de Anulación")
+                        df_causas_disp = df_causas_grp.rename(columns={
+                            col_causa: "Causa de Anulación",
+                            "Líneas_Anuladas": "Líneas Anuladas",
+                            "Pedidos_Afectados": "Pedidos Únicos",
+                            "Monto_Total": "Monto Anulado ($)"
+                        })
+                        st.dataframe(
+                            df_causas_disp,
+                            hide_index=True,
+                            column_config={
+                                "Causa de Anulación": st.column_config.Column("Causa de Anulación", width="large"),
+                                "Líneas Anuladas": st.column_config.NumberColumn("Líneas Anuladas", format="%d", width="small"),
+                                "Pedidos Únicos": st.column_config.NumberColumn("Pedidos Únicos", format="%d", width="small"),
+                                "Monto Anulado ($)": st.column_config.NumberColumn("Monto Anulado ($)", format="$%.2f", width="medium")
+                            }
+                        )
+
+                st.markdown("---")
+                st.markdown("### 🏆 Top de Tiendas con Mayor Cantidad de Líneas Anuladas")
+
+                if "Tienda" in df_a_view.columns:
+                    tb_top_anul = df_a_view.groupby("Tienda", as_index=False).agg(
+                        Líneas_Anuladas=("Pedido", "count"),
+                        Pedidos_Afectados=("Pedido", "nunique") if "Pedido" in df_a_view.columns else ("Almacen", "count"),
+                        Monto_Total_Anulado=("Monto_Signed", "sum")
+                    ).sort_values(by="Líneas_Anuladas", ascending=False).head(15).reset_index(drop=True)
+
+                    cols_top_a = ["Tienda", "Líneas_Anuladas", "Pedidos_Afectados", "Monto_Total_Anulado"]
+                    tb_top_anul_disp = tb_top_anul[cols_top_a].rename(columns={
+                        "Líneas_Anuladas": "Líneas Anuladas",
+                        "Pedidos_Afectados": "Pedidos Afectados",
+                        "Monto_Total_Anulado": "Monto Total Anulado ($)"
+                    })
+
+                    st.dataframe(
+                        tb_top_anul_disp,
+                        hide_index=True,
+                        column_config={
+                            "Tienda": st.column_config.Column("Tienda", width="medium"),
+                            "Líneas Anuladas": st.column_config.NumberColumn("Líneas Anuladas", format="%d", width="medium"),
+                            "Pedidos Afectados": st.column_config.NumberColumn("Pedidos Afectados", format="%d", width="medium"),
+                            "Monto Total Anulado ($)": st.column_config.NumberColumn("Monto Total Anulado ($)", format="$%.2f", width="large")
+                        }
+                    )
+
+                st.markdown("---")
+                st.markdown("### 🔎 Detalle Individual de Rectificaciones Anuladas por Tienda y Pedido")
+
+                col_anul_t, col_anul_p = st.columns([2, 2])
+                with col_anul_t:
+                    tiendas_anul_opt = ["Todas las Tiendas"] + sorted([str(x) for x in df_a_view["Tienda"].dropna().unique() if str(x) != "nan"]) if "Tienda" in df_a_view.columns else ["Todas las Tiendas"]
+                    t_anul_sel = st.selectbox("Seleccionar Tienda a Auditar (Anulaciones):", tiendas_anul_opt, index=0)
+
+                with col_anul_p:
+                    busqueda_ped_anul = st.text_input("🔍 Filtrar por Número de Pedido (Anulaciones):", "")
+
+                df_anul_det_filtrado = df_a_view.copy()
+
+                if t_anul_sel != "Todas las Tiendas" and "Tienda" in df_anul_det_filtrado.columns:
+                    df_anul_det_filtrado = df_anul_det_filtrado[df_anul_det_filtrado["Tienda"].astype(str) == str(t_anul_sel)]
+
+                if busqueda_ped_anul.strip() and "Pedido" in df_anul_det_filtrado.columns:
+                    df_anul_det_filtrado = df_anul_det_filtrado[
+                        df_anul_det_filtrado["Pedido"].astype(str).str.contains(busqueda_ped_anul.strip(), case=False, na=False)
+                    ]
+
+                cols_anul_disp = ["Almacen", "Tienda", "Pedido", "Nota_Nro", "Fecha", "Tipo", "Cant_Blt", "Monto_Signed", "Fecha_Modif", "Estado", "Causa_Anulacion", "Estado_RP", "Lote_RPA"]
+                cols_anul_exist = [c for c in cols_anul_disp if c in df_anul_det_filtrado.columns]
+
+                df_anul_clean = df_anul_det_filtrado[cols_anul_exist].rename(columns={
+                    "Almacen": "Almacén",
+                    "Tienda": "Tienda",
+                    "Pedido": "Pedido",
+                    "Nota_Nro": "Nota Nro",
+                    "Fecha": "Fecha",
+                    "Tipo": "Tipo (Falta/Sobra)",
+                    "Cant_Blt": "Cnt. Blt.",
+                    "Monto_Signed": "Imp ($)",
+                    "Fecha_Modif": "Fch. Modif.",
+                    "Estado": "Estado",
+                    "Causa_Anulacion": "Motivo / Causa",
+                    "Estado_RP": "Estado RP",
+                    "Lote_RPA": "Lote RPA"
+                })
+
+                st.dataframe(
+                    df_anul_clean,
+                    hide_index=True,
+                    column_config={
+                        "Almacén": st.column_config.Column("Almacén", width="small"),
+                        "Tienda": st.column_config.Column("Tienda", width="small"),
+                        "Pedido": st.column_config.Column("Pedido", width="medium"),
+                        "Nota Nro": st.column_config.Column("Nota Nro", width="small"),
+                        "Fecha": st.column_config.Column("Fecha", width="small"),
+                        "Tipo (Falta/Sobra)": st.column_config.Column("Tipo", width="small"),
+                        "Cnt. Blt.": st.column_config.NumberColumn("Cnt. Blt.", format="%.2f", width="small"),
+                        "Imp ($)": st.column_config.NumberColumn("Imp ($)", format="$%.2f", width="medium"),
+                        "Fch. Modif.": st.column_config.Column("Fch. Modif.", width="medium"),
+                        "Estado": st.column_config.Column("Estado", width="small"),
+                        "Motivo / Causa": st.column_config.Column("Motivo / Causa Anulación", width="large"),
+                        "Estado RP": st.column_config.Column("Estado RP", width="small"),
+                        "Lote RPA": st.column_config.Column("Lote RPA", width="small")
+                    }
+                )
+            else:
+                st.info("ℹ️ No se cargaron datos del CSV 'causa anulaciones' o no se registraron anulaciones.")
 
 except Exception as e:
     st.error(f"Error cargando el tablero: {e}")

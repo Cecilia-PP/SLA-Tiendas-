@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 import pandas as pd
 import glob
 import os
@@ -13,6 +13,7 @@ os.chdir(DIR_BASE)
 
 PATH_PARQUET_RECT = os.path.join(DIR_BASE, "Tablero_Rectificaciones_Detalle.parquet")
 PATH_PARQUET_SLA = os.path.join(DIR_BASE, "Tablero_SLA_Pedidos.parquet")
+PATH_PARQUET_ANUL = os.path.join(DIR_BASE, "Tablero_Anulaciones_Detalle.parquet")
 
 print("==================================================================")
 print("🚀 EJECUTANDO ETL CON FALTANTE UXB Y FORMATO NO ENTREGADO (> 10 LÍNEAS)")
@@ -442,6 +443,59 @@ if list_rect:
         df_sla.to_parquet(PATH_PARQUET_SLA, index=False)
         print(f"    ✓ Archivo Parquet actualizado: {PATH_PARQUET_SLA}")
 
+# 7. CARGAR Y PROCESAR MAESTRO DE CAUSA ANULACIONES / RECTIFICACIONES RECHAZADAS
+archivos_anul = glob.glob(os.path.join(DIR_DATOS, "*[Aa]nula*.csv")) + glob.glob(os.path.join(DIR_BASE, "*[Aa]nula*.csv")) + glob.glob(os.path.join(DIR_DATOS, "*[Cc]ausa*.csv")) + glob.glob(os.path.join(DIR_BASE, "*[Cc]ausa*.csv"))
+
+list_anul = []
+for f in archivos_anul:
+    print(f"📌 Cargando archivo de Causa de Anulaciones: {f}")
+    try:
+        df_a = pd.read_csv(f, sep=None, engine="python", encoding="latin1", dtype=str, on_bad_lines="skip")
+        df_a.columns = df_a.columns.str.strip()
+        list_anul.append(df_a)
+    except Exception as e:
+        print(f"    ⚠️ Error leyendo {f}: {e}")
+
+if list_anul:
+    df_anul = pd.concat(list_anul, ignore_index=True)
+    df_anul.columns = df_anul.columns.str.strip()
+    
+    mapa_cols_anul = {}
+    for c in df_anul.columns:
+        clow = c.lower()
+        if "almac" in clow: mapa_cols_anul[c] = "Almacen"
+        elif "tienda" in clow or "sucursal" in clow: mapa_cols_anul[c] = "Tienda"
+        elif "pedido" in clow: mapa_cols_anul[c] = "Pedido"
+        elif "nota" in clow or "nro" in clow: mapa_cols_anul[c] = "Nota_Nro"
+        elif "fch. modif" in clow or "fch_modif" in clow or "fecha modif" in clow: mapa_cols_anul[c] = "Fecha_Modif"
+        elif "fech" in clow and "modif" not in clow: mapa_cols_anul[c] = "Fecha"
+        elif "tipo" in clow or "motivo_rect" in clow: mapa_cols_anul[c] = "Tipo"
+        elif "cnt" in clow or "blt" in clow or "bulto" in clow or "cant" in clow: mapa_cols_anul[c] = "Cant_Blt"
+        elif "imp" in clow or "monto" in clow or "importe" in clow: mapa_cols_anul[c] = "Monto"
+        elif "estado rp" in clow: mapa_cols_anul[c] = "Estado_RP"
+        elif "estado" in clow: mapa_cols_anul[c] = "Estado"
+        elif "motivo" in clow or "causa" in clow: mapa_cols_anul[c] = "Causa_Anulacion"
+        elif "lote" in clow or "rpa" in clow: mapa_cols_anul[c] = "Lote_RPA"
+
+    df_anul = df_anul.rename(columns=mapa_cols_anul)
+    
+    if "Pedido" in df_anul.columns: df_anul["Pedido"] = df_anul["Pedido"].apply(normalizar_pedido)
+    if "Tienda" in df_anul.columns: df_anul["Tienda"] = df_anul["Tienda"].apply(normalizar_pedido)
+    if "Almacen" in df_anul.columns: df_anul["Almacen"] = df_anul["Almacen"].astype(str).str.strip()
+    if "Monto" in df_anul.columns: df_anul["Monto"] = pd.to_numeric(df_anul["Monto"].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
+    if "Cant_Blt" in df_anul.columns: df_anul["Cant_Blt"] = pd.to_numeric(df_anul["Cant_Blt"].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
+    
+    if "Tienda" in df_anul.columns:
+        df_anul["Responsable_Tienda"] = df_anul["Tienda"].map(mapa_supervisores).fillna("Sin Asignar")
+        df_anul["Gestion"] = df_anul["Tienda"].map(mapa_gestion).fillna("Sin Clasificar")
+
+    if "Pedido" in df_anul.columns and "Tienda" in df_anul.columns:
+        df_anul["Area_Salida"] = df_anul.set_index(["Pedido", "Tienda"]).index.map(mapa_area_pedido_tienda)
+        df_anul["Area_Salida"] = df_anul["Area_Salida"].fillna(df_anul["Pedido"].map(mapa_area_salida_solo)).fillna("Sin Clasificar")
+
+    df_anul.to_parquet(PATH_PARQUET_ANUL, index=False)
+    print(f"    ✓ Archivo Parquet de Anulaciones generado: {PATH_PARQUET_ANUL} con {len(df_anul):,} registros.")
+
 print("==================================================================")
-print("✨ PROCESO COMPLETADO Y LOS 2 ARCHIVOS PARQUET FUERON GENERADOS CORRECTAMENTE.")
+print("✨ PROCESO COMPLETADO Y LOS ARCHIVOS PARQUET FUERON GENERADOS CORRECTAMENTE.")
 print("==================================================================")
