@@ -495,7 +495,7 @@ try:
 
             if "Responsable_Tienda" in df_sla.columns:
                 lista_supervisores = ["Todos los Franquiciados / Supervisores"] + sorted([str(x) for x in df_sla["Responsable_Tienda"].dropna().unique()])
-                sup_sel_hoja1 = st.selectbox("Filtrar por Franquiciado / Supervisor (Hoja 1):", lista_supervisores, index=0)
+                sup_sel_hoja1 = st.selectbox("Filtrar por Franquiciado / Supervisor:", lista_supervisores, index=0)
             else:
                 sup_sel_hoja1 = "Todos los Franquiciados / Supervisores"
 
@@ -1098,7 +1098,7 @@ try:
                     
                     col_sel_t, col_input_t = st.columns([2, 1])
                     with col_sel_t:
-                        t_sust_sel = st.selectbox("Seleccionar Tienda a Auditar (Pestaña Sustituciones):", opciones_tienda_sust, index=0)
+                        t_sust_sel = st.selectbox("Seleccionar Tienda a Auditar:", opciones_tienda_sust, index=0)
                     with col_input_t:
                         t_escribir = st.text_input("✍️ O escribir Nº de Tienda directamente:", "", help="Si escribes aquí un número de tienda, se aplicará directamente el filtro sobre las tablas inferiores.")
 
@@ -1171,7 +1171,7 @@ try:
                                 df_sust_analisis["Tienda"].astype(str).str.contains(tienda_final_filtro, case=False, na=False)
                             ].copy()
 
-                        busqueda_pedido_sust = st.text_input("🔍 Filtrar exclusivamente por Número de Pedido (Pestaña Sustituciones):", "")
+                        busqueda_pedido_sust = st.text_input("🔍 Filtrar exclusivamente por Número de Pedido:", "")
                         if busqueda_pedido_sust:
                             df_sust_analisis_filtrada = df_sust_analisis_filtrada[
                                 df_sust_analisis_filtrada["Pedido"].astype(str).str.contains(busqueda_pedido_sust.strip(), case=False, na=False)
@@ -1223,9 +1223,9 @@ try:
                 tiendas_area_opt = ["Todas las Tiendas"] + sorted([str(x) for x in df_r_area["Tienda"].dropna().unique() if str(x) != "nan"]) if "Tienda" in df_r_area.columns else ["Todas las Tiendas"]
                 col_t_h5_1, col_t_h5_2 = st.columns([2, 1])
                 with col_t_h5_1:
-                    t_area_sel = st.selectbox("Filtrar por Tienda (Hoja 5):", tiendas_area_opt, index=0)
+                    t_area_sel = st.selectbox("Filtrar por Tienda:", tiendas_area_opt, index=0)
                 with col_t_h5_2:
-                    t_area_escribir = st.text_input("✍️ O escribir Nº de Tienda (Hoja 5):", "")
+                    t_area_escribir = st.text_input("✍️ O escribir Nº de Tienda:", "")
 
                 if t_area_escribir.strip() and "Tienda" in df_r_area.columns:
                     df_r_area = df_r_area[df_r_area["Tienda"].astype(str).str.contains(t_area_escribir.strip(), case=False, na=False)]
@@ -1269,10 +1269,11 @@ try:
                 a4.metric("💰 Monto Confirmado Estado 'M' ($)", f"${tot_monto_conf_area:,.2f}")
 
                 st.markdown("---")
-                st.markdown("### 📊 Distribución de Pedidos Rectificados y Monto Confirmado por Área de Salida")
+                st.markdown("### 📊 Distribución de Pedidos y Líneas Rectificadas por Área de Salida")
 
                 tb_area_graf = df_r_area.groupby("Area_Salida", as_index=False).agg(
                     Pedidos_Rectificados=("Pedido", "nunique"),
+                    Lineas_Rectificadas=("Pedido", "count"),
                     Monto_Confirmado=("Monto_Confirmado", "sum")
                 ).sort_values(by="Pedidos_Rectificados", ascending=False).reset_index(drop=True)
 
@@ -1295,25 +1296,24 @@ try:
                     )
                     st.plotly_chart(fig_area_pedidos, use_container_width=True)
 
-                # GRÁFICO 2: MONTO CONFIRMADO ESTADO 'M'
+                # GRÁFICO 2: CANTIDAD DE LÍNEAS RECTIFICADAS POR SECTOR
                 with col_g2:
-                    tb_area_graf_monto = tb_area_graf.sort_values(by="Monto_Confirmado", ascending=False).reset_index(drop=True)
-                    tb_area_graf_monto["Monto_Texto"] = tb_area_graf_monto["Monto_Confirmado"].apply(lambda x: f"${x:,.0f}")
+                    tb_area_graf_lineas = tb_area_graf.sort_values(by="Lineas_Rectificadas", ascending=False).reset_index(drop=True)
 
-                    fig_area_monto = px.bar(
-                        tb_area_graf_monto, x="Area_Salida", y="Monto_Confirmado",
-                        color="Area_Salida", text="Monto_Texto",
-                        title="<b>Monto Neto Confirmado ($) Estado 'M' por Sector</b>"
+                    fig_area_lineas = px.bar(
+                        tb_area_graf_lineas, x="Area_Salida", y="Lineas_Rectificadas",
+                        color="Area_Salida", text="Lineas_Rectificadas",
+                        title="<b>Cantidad de Líneas Rectificadas por Sector</b>"
                     )
-                    fig_area_monto.update_traces(textposition='outside')
-                    fig_area_monto.update_layout(
+                    fig_area_lineas.update_traces(textposition='outside')
+                    fig_area_lineas.update_layout(
                         xaxis_title="Área de Salida", 
-                        yaxis_title="Monto Confirmado ($)",
+                        yaxis_title="Cantidad de Líneas",
                         height=390, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                         showlegend=False,
                         xaxis=dict(type='category')
                     )
-                    st.plotly_chart(fig_area_monto, use_container_width=True)
+                    st.plotly_chart(fig_area_lineas, use_container_width=True)
 
                 st.markdown("---")
                 st.markdown("### 📋 Resumen Consolidado por Área de Salida")
@@ -1363,7 +1363,7 @@ try:
                 if area_especifica_sel != "Todas las Áreas":
                     df_r_area_det = df_r_area_det[df_r_area_det["Area_Salida"].astype(str) == str(area_especifica_sel)]
 
-                busqueda_ped_area = st.text_input("🔍 Filtrar exclusivamente por Número de Pedido (Hoja 5):", "")
+                busqueda_ped_area = st.text_input("🔍 Filtrar exclusivamente por Número de Pedido:", "")
                 if busqueda_ped_area:
                     df_r_area_det = df_r_area_det[
                         df_r_area_det["Pedido"].astype(str).str.contains(busqueda_ped_area.strip(), case=False, na=False)
