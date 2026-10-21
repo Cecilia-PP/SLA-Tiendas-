@@ -342,14 +342,15 @@ try:
                 df_rect = df_rect[~df_rect["Tienda"].isin(tiendas_pocas_compras)]
             st.sidebar.warning(f"Excluidas {len(tiendas_pocas_compras):,} tiendas con < {umbral_min_pedidos} pedidos.")
 
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
             "📊 1. Ranking SLA por Almacén y Tienda",
             "📈 2. Casuísticas y Modelo SLA",
             "🏪 3. Auditoría Práctica por Tienda",
             "🔄 4. Análisis de Sustituciones",
             "📦 5. Rectificaciones por Área de Salida",
             "🧩 6. Análisis de Unidades Sueltas",
-            "❌ 7. Análisis de Rectificaciones Anuladas"
+            "❌ 7. Análisis de Rectificaciones Anuladas",
+            "📦 8. Error Facturación Master (Líneas)"
         ])
 
         # HOJA 1
@@ -431,7 +432,11 @@ try:
                 df_lineas_mes = pd.DataFrame(columns=["Mes_Num", "Cant_Lineas_Rectificadas"])
 
             df_meses_base = pd.DataFrame({"Mes_Num": meses_ordenados})
+            df_meses_base["Mes_Num"] = pd.to_numeric(df_meses_base["Mes_Num"], errors="coerce").fillna(0).astype(int)
             df_meses_base["Nombre_Mes"] = df_meses_base["Mes_Num"].map(mapa_meses)
+            
+            if not df_lineas_mes.empty and "Mes_Num" in df_lineas_mes.columns:
+                df_lineas_mes["Mes_Num"] = pd.to_numeric(df_lineas_mes["Mes_Num"], errors="coerce").fillna(0).astype(int)
             
             df_lineas_mes = df_meses_base.merge(df_lineas_mes, on="Mes_Num", how="left").fillna({"Cant_Lineas_Rectificadas": 0})
             df_lineas_mes = df_lineas_mes.sort_values("Mes_Num").reset_index(drop=True)
@@ -916,6 +921,20 @@ try:
                     cols_rect_exist = [c for c in cols_rect_disp if c in df_aud_rect.columns]
 
                     df_aud_rect_disp = df_aud_rect[cols_rect_exist].copy()
+                    if "Fecha de Grabación" in df_aud_rect_disp.columns:
+                        f_str = df_aud_rect_disp["Fecha de Grabación"].astype(str).str.strip()
+                        f_dt = pd.to_datetime(f_str, format="%Y%m%d", errors="coerce")
+                        mask_na = f_dt.isna()
+                        if mask_na.any():
+                            f_dt[mask_na] = pd.to_datetime(f_str[mask_na], dayfirst=True, errors="coerce")
+                        df_aud_rect_disp["Fecha de Grabación"] = f_dt.dt.strftime("%d/%m/%Y").fillna(f_str)
+                    elif "Fecha" in df_aud_rect_disp.columns:
+                        f_str = df_aud_rect_disp["Fecha"].astype(str).str.strip()
+                        f_dt = pd.to_datetime(f_str, format="%Y%m%d", errors="coerce")
+                        mask_na = f_dt.isna()
+                        if mask_na.any():
+                            f_dt[mask_na] = pd.to_datetime(f_str[mask_na], dayfirst=True, errors="coerce")
+                        df_aud_rect_disp["Fecha"] = f_dt.dt.strftime("%d/%m/%Y").fillna(f_str)
                     
                     rename_dict_det = {
                         "Almacen": "Almacén",
@@ -1354,7 +1373,7 @@ try:
 
                 cols_area_det_disp = [
                     "Almacen", "Tienda", "Pedido", "Area_Salida", 
-                    col_art_area, col_desc_area, "Familia", "Subfamilia", 
+                    col_art_area, col_desc_area, 
                     "Motivo", "Procedencia", "Estado", "Monto_Rectif"
                 ]
 
@@ -1368,7 +1387,7 @@ try:
                     "Area_Salida": "Área de Salida",
                     col_art_area: "SKU",
                     col_desc_area: "Producto / Descripción",
-                    "Monto_Rectif": "Monto ($)"
+                    "Monto_Signed": "Monto ($)"
                 })
 
                 st.dataframe(
@@ -1446,7 +1465,7 @@ try:
 
                     cols_top_sueltas = ["Tienda", "Líneas_Sueltas", "Pedidos_Afectados", "Unidades_Sueltas_Totales", "Monto_Total_Suelto"]
                     top15_sueltas_disp = top15_sueltas[cols_top_sueltas].rename(columns={
-                        "Líneas_Sueltas": "Líneas Sueltas (< 1 UxB)",
+                        "Líneas_Sueltas": "Lineas con Unidades sueltas",
                         "Pedidos_Afectados": "Pedidos Afectados",
                         "Unidades_Sueltas_Totales": "Unidades Sueltas Totales",
                         "Monto_Total_Suelto": "Monto Total ($)"
@@ -1457,7 +1476,7 @@ try:
                         hide_index=True,
                         column_config={
                             "Tienda": st.column_config.Column("Tienda", width="small"),
-                            "Líneas Sueltas (< 1 UxB)": st.column_config.NumberColumn("Líneas Sueltas (< 1 UxB)", format="%d", width="medium"),
+                            "Lineas con Unidades sueltas": st.column_config.NumberColumn("Lineas con Unidades sueltas", format="%d", width="medium"),
                             "Pedidos Afectados": st.column_config.NumberColumn("Pedidos Afectados", format="%d", width="medium"),
                             "Unidades Sueltas Totales": st.column_config.NumberColumn("Unidades Sueltas Totales", format="%.0f", width="medium"),
                             "Monto Total ($)": st.column_config.NumberColumn("Monto Total ($)", format="$%.2f", width="medium")
@@ -1482,9 +1501,17 @@ try:
 
                     col_desc_s = "Descripción" if "Descripción" in df_det_sueltas.columns else "Producto"
 
+                    col_motivo_s = "Motivo_Clean" if "Motivo_Clean" in df_det_sueltas.columns else ("Motivo" if "Motivo" in df_det_sueltas.columns else None)
+                    if col_motivo_s:
+                        df_det_sueltas["Factor_Signo"] = df_det_sueltas[col_motivo_s].astype(str).str.strip().str.upper().apply(lambda x: -1.0 if x == "S" else 1.0)
+                    else:
+                        df_det_sueltas["Factor_Signo"] = 1.0
+
+                    df_det_sueltas["Monto_Signed"] = df_det_sueltas["Monto_Rectif"] * df_det_sueltas["Factor_Signo"]
+
                     cols_sueltas_disp = [
                         "Almacen", "Tienda", "Pedido", "Area_Salida", col_art_s, col_desc_s, 
-                        "Familia", "Unidades_Num", "UxB", "Motivo", "Procedencia", "Estado", "Monto_Rectif"
+                        "Unidades_Num", "UxB", "Motivo", "Procedencia", "Estado", "Monto_Signed"
                     ]
                     cols_exist_s = [c for c in cols_sueltas_disp if c in df_det_sueltas.columns]
 
@@ -1496,7 +1523,7 @@ try:
                         col_desc_s: "Producto / Descripción",
                         "Unidades_Num": "Unid. Rectificadas",
                         "UxB": "Cant. por Bulto (UxB)",
-                        "Monto_Rectif": "Monto ($)"
+                        "Monto_Signed": "Monto ($)"
                     })
 
                     st.dataframe(
@@ -1697,6 +1724,164 @@ try:
                 )
             else:
                 st.info("ℹ️ No se cargaron datos del CSV 'causa anulaciones' o no se registraron anulaciones.")
+
+        # HOJA 8: ANÁLISIS DE ERROR FACTURACIÓN MASTER (ANÁLISIS DE LÍNEAS INDIVIDUALES)
+        with tab8:
+            st.subheader("📦 Análisis de Líneas con Error de Facturación Master")
+            st.markdown("Auditoría enfocada exclusivamente a nivel **línea de artículo / SKU** para identificar todas aquellas rectificaciones que corresponden a desvíos de **Bulto Máster / Empaque**, independientemente de la clasificación SLA del pedido completo.")
+
+            if not df_rect.empty:
+                df_m_lines = df_rect.copy()
+
+                # Excluir rectificaciones rechazadas 'R'
+                if "Estado" in df_m_lines.columns:
+                    df_m_lines = df_m_lines[df_m_lines["Estado"] != "R"].copy()
+
+                col_art_m = "Artículo" if "Artículo" in df_m_lines.columns else ("SKU" if "SKU" in df_m_lines.columns else "Producto")
+
+                # Criterio dinámico para identificar líneas con Error de Facturación Master:
+                # 1. La cantidad coincide con UxM (> UxB) o múltiplos de UxM
+                # 2. La cantidad coincide con la diferencia (UxM - UxB)
+                # 3. La línea viene marcada como Es_Master = 'Sí'
+                def es_linea_master_check(row):
+                    unid = float(row.get("Unidades_Num", 0.0))
+                    uxb = float(row.get("UxB", 0.0))
+                    uxm = float(row.get("UxM", 0.0))
+                    bulfm = float(row.get("BULFM", 1.0))
+                    es_m_flag = str(row.get("Es_Master", "")).strip().upper() in ["SI", "SÍ"]
+
+                    if bulfm > 1.0 or uxm > uxb or es_m_flag:
+                        if uxm > 1.0 and unid > 0.0 and (unid == uxm or unid % uxm == 0):
+                            return True
+                        dif = uxm - uxb
+                        if dif > 0.0 and unid > 0.0 and (unid == dif or unid % dif == 0):
+                            return True
+                        if es_m_flag and unid > 0.0 and uxb > 0.0 and (unid == uxb or unid % uxb == 0):
+                            return True
+                    return False
+
+                df_m_lines["Es_Linea_Master"] = df_m_lines.apply(es_linea_master_check, axis=1)
+                df_m_only = df_m_lines[df_m_lines["Es_Linea_Master"] == True].copy()
+
+                # Aplicar filtro por Tienda en la Hoja 8
+                tiendas_m_opt = ["Todas las Tiendas"] + sorted([str(x) for x in df_m_only["Tienda"].dropna().unique() if str(x) != "nan"]) if "Tienda" in df_m_only.columns else ["Todas las Tiendas"]
+                col_tm_1, col_tm_2 = st.columns([2, 1])
+                with col_tm_1:
+                    t_master_sel = st.selectbox("Filtrar por Tienda (Hoja 8):", tiendas_m_opt, index=0)
+                with col_tm_2:
+                    t_master_escribir = st.text_input("✍️ O escribir Nº de Tienda (Hoja 8):", "")
+
+                if t_master_escribir.strip() and "Tienda" in df_m_only.columns:
+                    df_m_only = df_m_only[df_m_only["Tienda"].astype(str).str.contains(t_master_escribir.strip(), case=False, na=False)]
+                elif t_master_sel != "Todas las Tiendas" and "Tienda" in df_m_only.columns:
+                    df_m_only = df_m_only[df_m_only["Tienda"].astype(str) == str(t_master_sel)]
+
+                tot_lineas_m = len(df_m_only)
+                tot_pedidos_m = df_m_only["Pedido"].nunique() if not df_m_only.empty else 0
+                tot_tiendas_m = df_m_only["Tienda"].nunique() if not df_m_only.empty else 0
+                tot_monto_m = df_m_only["Monto_Rectif"].sum() if "Monto_Rectif" in df_m_only.columns else 0.0
+
+                b1, b2, b3, b4 = st.columns(4)
+                b1.metric("📦 Líneas con Error Master", f"{tot_lineas_m:,}")
+                b2.metric("📋 Pedidos Involucrados", f"{tot_pedidos_m:,}")
+                b3.metric("🏪 Tiendas Afectadas", f"{tot_tiendas_m:,}")
+                b4.metric("💰 Impacto Económico ($)", f"${tot_monto_m:,.2f}")
+
+                st.markdown("---")
+
+                if not df_m_only.empty:
+                    st.markdown("### 🏆 Top 15 Tiendas con Mayor Cantidad de Líneas con Error Master")
+
+                    group_tienda_m = df_m_only.groupby("Tienda", as_index=False).agg(
+                        Líneas_Master=("Pedido", "count"),
+                        Pedidos_Afectados=("Pedido", "nunique"),
+                        Unidades_Master_Totales=("Unidades_Num", "sum") if "Unidades_Num" in df_m_only.columns else ("Pedido", "count"),
+                        Monto_Total_Master=("Monto_Rectif", "sum") if "Monto_Rectif" in df_m_only.columns else ("Pedido", "count")
+                    ).sort_values(by="Líneas_Master", ascending=False).reset_index(drop=True)
+
+                    top15_m = group_tienda_m.head(15).copy()
+
+                    cols_top_m = ["Tienda", "Líneas_Master", "Pedidos_Afectados", "Unidades_Master_Totales", "Monto_Total_Master"]
+                    top15_m_disp = top15_m[cols_top_m].rename(columns={
+                        "Líneas_Master": "Líneas Error Master",
+                        "Pedidos_Afectados": "Pedidos Afectados",
+                        "Unidades_Master_Totales": "Unidades Totales",
+                        "Monto_Total_Master": "Monto Total ($)"
+                    })
+
+                    st.dataframe(
+                        top15_m_disp,
+                        hide_index=True,
+                        column_config={
+                            "Tienda": st.column_config.Column("Tienda", width="small"),
+                            "Líneas Error Master": st.column_config.NumberColumn("Líneas Error Master", format="%d", width="medium"),
+                            "Pedidos Afectados": st.column_config.NumberColumn("Pedidos Afectados", format="%d", width="medium"),
+                            "Unidades Totales": st.column_config.NumberColumn("Unidades Totales", format="%.0f", width="medium"),
+                            "Monto Total ($)": st.column_config.NumberColumn("Monto Total ($)", format="$%.2f", width="medium")
+                        }
+                    )
+
+                    st.markdown("---")
+                    st.markdown("### 🔎 Detalle Individual de Líneas Rectificadas por Error Master")
+
+                    busqueda_ped_m = st.text_input("🔍 Filtrar por Número de Pedido (Líneas Master):", "")
+                    df_det_m = df_m_only.copy()
+                    if busqueda_ped_m:
+                        df_det_m = df_det_m[
+                            df_det_m["Pedido"].astype(str).str.contains(busqueda_ped_m.strip(), case=False, na=False)
+                        ]
+
+                    col_desc_m = "Descripción" if "Descripción" in df_det_m.columns else "Producto"
+
+                    cols_m_disp = [
+                        "Almacen", "Tienda", "Pedido", "Area_Salida", col_art_m, col_desc_m, 
+                        "UxB", "BULFM", "Unidades_Num", "Motivo", "Procedencia", "Estado", "Monto_Rectif"
+                    ]
+                    cols_exist_m = [c for c in cols_m_disp if c in df_det_m.columns]
+
+                    df_m_det_clean = df_det_m[cols_exist_m].copy()
+
+                    if "Fecha de Grabación" in df_det_m.columns:
+                        f_s = df_det_m["Fecha de Grabación"].astype(str).str.strip()
+                        f_d = pd.to_datetime(f_s, format="%Y%m%d", errors="coerce")
+                        m_na = f_d.isna()
+                        if m_na.any():
+                            f_d[m_na] = pd.to_datetime(f_s[m_na], dayfirst=True, errors="coerce")
+                        df_m_det_clean["Fecha Grabación"] = f_d.dt.strftime("%d/%m/%Y").fillna(f_s)
+
+                    df_m_det_clean = df_m_det_clean.rename(columns={
+                        "Almacen": "Almacén",
+                        "Area_Salida": "Área de Salida",
+                        col_art_m: "SKU",
+                        col_desc_m: "Producto / Descripción",
+                        "BULFM": "BxM",
+                        "Unidades_Num": "Unid. Rectificadas",
+                        "Monto_Signed": "Monto ($)"
+                    })
+
+                    st.dataframe(
+                        df_m_det_clean,
+                        hide_index=True,
+                        column_config={
+                            "Almacén": st.column_config.Column("Almacén", width="small"),
+                            "Tienda": st.column_config.Column("Tienda", width="small"),
+                            "Pedido": st.column_config.Column("Pedido", width="medium"),
+                            "Área de Salida": st.column_config.Column("Área de Salida", width="medium"),
+                            "SKU": st.column_config.Column("SKU", width="small"),
+                            "Producto / Descripción": st.column_config.Column("Producto / Descripción", width="large"),
+                            "UxB": st.column_config.NumberColumn("UxB", format="%.0f", width="small"),
+                            "BxM": st.column_config.NumberColumn("BxM", format="%.0f", width="small"),
+                            "Unid. Rectificadas": st.column_config.NumberColumn("Unid. Rectificadas", format="%.0f", width="small"),
+                            "Motivo": st.column_config.Column("Motivo", width="small"),
+                            "Procedencia": st.column_config.Column("Procedencia", width="small"),
+                            "Estado": st.column_config.Column("Estado", width="small"),
+                            "Monto ($)": st.column_config.NumberColumn("Monto ($)", format="$%.2f", width="medium")
+                        }
+                    )
+                else:
+                    st.success("🎉 No se registraron líneas de rectificación con Error Facturación Master para la selección realizada.")
+            else:
+                st.info("ℹ️ No hay rectificaciones disponibles para auditar el error de facturación máster a nivel de líneas.")
 
 except Exception as e:
     st.error(f"Error cargando el tablero: {e}")

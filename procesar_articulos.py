@@ -384,6 +384,15 @@ if list_rect:
     # Marcador de Unidad Suelta: Unidades_Num < UxB (cuando UxB > 1)
     df_rect_all["Es_Unidad_Suelta"] = (df_rect_all["UxB"] > 1.0) & (df_rect_all["Unidades_Num"] > 0.0) & (df_rect_all["Unidades_Num"] < df_rect_all["UxB"])
 
+    col_fec_r = [c for c in ["Fecha de Grabación", "Fecha", "Fecha_DT"] if c in df_rect_all.columns]
+    if col_fec_r:
+        f_s = df_rect_all[col_fec_r[0]].astype(str).str.strip()
+        f_d = pd.to_datetime(f_s, format="%Y%m%d", errors="coerce")
+        m_na = f_d.isna()
+        if m_na.any():
+            f_d[m_na] = pd.to_datetime(f_s[m_na], dayfirst=True, errors="coerce")
+        df_rect_all[col_fec_r[0]] = f_d.dt.strftime("%d/%m/%Y").fillna(f_s)
+
     # 💾 GUARDAR PARQUET 1: DETALLE DE RECTIFICACIONES
     df_rect_all.to_parquet(PATH_PARQUET_RECT, index=False)
     print(f"    ✓ Archivo Parquet actualizado: {PATH_PARQUET_RECT}")
@@ -393,7 +402,7 @@ if list_rect:
     df_rect_all["Motivo_Norm"] = df_rect_all[col_motivo].astype(str).str.strip().str.upper()
 
     def es_linea_error_master(row):
-        """Evalúa si una línea individual corresponde a una anomalía de Bulto Máster."""
+        """Evalúa si una línea individual corresponde estrictamente a un Error de Facturación Máster."""
         sku = str(row.get(col_art_rect, "")).strip().lstrip("0")
         unid = float(row.get("Unidades_Num", 0.0))
         es_m_flag = str(row.get("Es_Master", "")).strip().upper() in ["SI", "SÍ"]
@@ -401,17 +410,21 @@ if list_rect:
         datos_m = mapa_uxb.get(sku, {})
         uxb = float(datos_m.get("UxB", 0.0))
         uxm = float(datos_m.get("UxM", 0.0))
+        bulfm = float(datos_m.get("BULFM", 1.0))
         
-        if uxm <= 1.0 and not es_m_flag:
+        # 1. DEBE ser un producto Máster (Es_Master = Sí, o BULFM > 1.0, o UxM > UxB)
+        if not (es_m_flag or bulfm > 1.0 or uxm > uxb):
             return False
-        if uxm > 0.0 and uxm <= uxb:
-            return False
+            
+        # 2. Si sólo rectifica 1 Bulto Común (UxB), NO es un error Máster
         if uxb > 0.0 and unid == uxb:
             return False
-            
-        if uxm > 1.0 and unid > 0.0 and (unid == uxm or unid % uxm == 0):
+
+        # 3. DEBE rectificar el Bulto Máster completo (UxM) o múltiplos de UxM
+        if uxm > uxb and unid > 0.0 and (unid == uxm or unid % uxm == 0):
             return True
             
+        # 4. O la diferencia entre el Bulto Máster y el Bulto Común (UxM - UxB)
         dif_uxm_uxb = uxm - uxb
         if dif_uxm_uxb > 0.0 and dif_uxm_uxb != uxb and unid > 0.0:
             if unid == dif_uxm_uxb or unid % dif_uxm_uxb == 0:
