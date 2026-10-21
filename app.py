@@ -944,6 +944,7 @@ try:
                         "UxB": "UxB",
                         "BULFM": "BxM",
                         "Es_Master": "Master",
+                        "Es_Master": "Master",
                         "Monto_Signed": "Monto ($)"
                     }
                     if col_unid_grab:
@@ -1744,20 +1745,29 @@ try:
                 # 2. La cantidad coincide con la diferencia (UxM - UxB)
                 # 3. La línea viene marcada como Es_Master = 'Sí'
                 def es_linea_master_check(row):
+                    sku = str(row.get(col_art_m, "")).strip().lstrip("0")
                     unid = float(row.get("Unidades_Num", 0.0))
                     uxb = float(row.get("UxB", 0.0))
-                    uxm = float(row.get("UxM", 0.0))
                     bulfm = float(row.get("BULFM", 1.0))
+                    uxm = float(row.get("UxM", uxb * bulfm if uxb > 0 else 0.0))
                     es_m_flag = str(row.get("Es_Master", "")).strip().upper() in ["SI", "SÍ"]
 
-                    if bulfm > 1.0 or uxm > uxb or es_m_flag:
-                        if uxm > 1.0 and unid > 0.0 and (unid == uxm or unid % uxm == 0):
+                    # REGLA 1 STRICTA: DEBE ser un producto Máster ÚNICAMENTE si Es_Master es 'Sí'
+                    if not es_m_flag:
+                        return False
+
+                    # REGLA 2: EXCLUSIÓN ESTRICTA - Si rectifica 1 Bulto Común (UxB), NUNCA es Error Máster
+                    if uxb > 0.0 and unid == uxb:
+                        return False
+
+                    # REGLA 3: La cantidad DEBE ser igual o múltiplo entero de UxM (Bulto Máster Completo)
+                    if uxm > uxb and unid > 0.0:
+                        if unid == uxm or unid % uxm == 0:
                             return True
                         dif = uxm - uxb
-                        if dif > 0.0 and unid > 0.0 and (unid == dif or unid % dif == 0):
+                        if dif > 0.0 and dif != uxb and (unid == dif or unid % dif == 0):
                             return True
-                        if es_m_flag and unid > 0.0 and uxb > 0.0 and (unid == uxb or unid % uxb == 0):
-                            return True
+
                     return False
 
                 df_m_lines["Es_Linea_Master"] = df_m_lines.apply(es_linea_master_check, axis=1)
@@ -1767,9 +1777,9 @@ try:
                 tiendas_m_opt = ["Todas las Tiendas"] + sorted([str(x) for x in df_m_only["Tienda"].dropna().unique() if str(x) != "nan"]) if "Tienda" in df_m_only.columns else ["Todas las Tiendas"]
                 col_tm_1, col_tm_2 = st.columns([2, 1])
                 with col_tm_1:
-                    t_master_sel = st.selectbox("Filtrar por Tienda (Hoja 8):", tiendas_m_opt, index=0)
+                    t_master_sel = st.selectbox("Filtrar por Tienda:", tiendas_m_opt, index=0)
                 with col_tm_2:
-                    t_master_escribir = st.text_input("✍️ O escribir Nº de Tienda (Hoja 8):", "")
+                    t_master_escribir = st.text_input("✍️ O escribir Nº de Tienda:", "")
 
                 if t_master_escribir.strip() and "Tienda" in df_m_only.columns:
                     df_m_only = df_m_only[df_m_only["Tienda"].astype(str).str.contains(t_master_escribir.strip(), case=False, na=False)]
@@ -1835,7 +1845,7 @@ try:
 
                     cols_m_disp = [
                         "Almacen", "Tienda", "Pedido", "Area_Salida", col_art_m, col_desc_m, 
-                        "UxB", "BULFM", "Unidades_Num", "Motivo", "Procedencia", "Estado", "Monto_Rectif"
+                        "UxB", "BULFM", "Es_Master", "Unidades_Num", "Motivo", "Procedencia", "Estado", "Monto_Rectif"
                     ]
                     cols_exist_m = [c for c in cols_m_disp if c in df_det_m.columns]
 
@@ -1855,6 +1865,7 @@ try:
                         col_art_m: "SKU",
                         col_desc_m: "Producto / Descripción",
                         "BULFM": "BxM",
+                        "Es_Master": "Master",
                         "Unidades_Num": "Unid. Rectificadas",
                         "Monto_Signed": "Monto ($)"
                     })

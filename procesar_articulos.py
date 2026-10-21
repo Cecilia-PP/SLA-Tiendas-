@@ -410,24 +410,22 @@ if list_rect:
         datos_m = mapa_uxb.get(sku, {})
         uxb = float(datos_m.get("UxB", 0.0))
         uxm = float(datos_m.get("UxM", 0.0))
-        bulfm = float(datos_m.get("BULFM", 1.0))
         
-        # 1. DEBE ser un producto Máster (Es_Master = Sí, o BULFM > 1.0, o UxM > UxB)
-        if not (es_m_flag or bulfm > 1.0 or uxm > uxb):
+        # REGLA 1 STRICTA: DEBE ser producto Máster según la columna Es_Master == 'Sí'
+        if not es_m_flag:
             return False
             
-        # 2. Si sólo rectifica 1 Bulto Común (UxB), NO es un error Máster
+        # REGLA 2: EXCLUSIÓN ESTRICTA - Si rectifica 1 Bulto Común (UxB), NUNCA es Error Máster (es falta/sobra de 1 caja)
         if uxb > 0.0 and unid == uxb:
             return False
 
-        # 3. DEBE rectificar el Bulto Máster completo (UxM) o múltiplos de UxM
-        if uxm > uxb and unid > 0.0 and (unid == uxm or unid % uxm == 0):
-            return True
-            
-        # 4. O la diferencia entre el Bulto Máster y el Bulto Común (UxM - UxB)
-        dif_uxm_uxb = uxm - uxb
-        if dif_uxm_uxb > 0.0 and dif_uxm_uxb != uxb and unid > 0.0:
-            if unid == dif_uxm_uxb or unid % dif_uxm_uxb == 0:
+        # REGLA 3: Si UxM > UxB, la cantidad rectificada DEBE ser el Bulto Máster completo (UxM) o múltiplos enteros de UxM
+        if uxm > uxb and unid > 0.0:
+            if unid == uxm or unid % uxm == 0:
+                return True
+            # Diferencia entre Bulto Máster y Bulto Común (UxM - UxB)
+            dif_uxm_uxb = uxm - uxb
+            if dif_uxm_uxb > 0.0 and dif_uxm_uxb != uxb and (unid == dif_uxm_uxb or unid % dif_uxm_uxb == 0):
                 return True
                 
         return False
