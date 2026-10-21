@@ -1269,32 +1269,35 @@ try:
                 a4.metric("💰 Monto Confirmado Estado 'M' ($)", f"${tot_monto_conf_area:,.2f}")
 
                 st.markdown("---")
-                st.markdown("### 📊 Distribución de Pedidos y Líneas Rectificadas por Área de Salida")
+                st.markdown("### 📊 Distribución de Monto Confirmado y Líneas Rectificadas por Área de Salida")
 
                 tb_area_graf = df_r_area.groupby("Area_Salida", as_index=False).agg(
                     Pedidos_Rectificados=("Pedido", "nunique"),
                     Lineas_Rectificadas=("Pedido", "count"),
                     Monto_Confirmado=("Monto_Confirmado", "sum")
-                ).sort_values(by="Pedidos_Rectificados", ascending=False).reset_index(drop=True)
+                ).reset_index(drop=True)
 
                 col_g1, col_g2 = st.columns(2)
 
-                # GRÁFICO 1: CANTIDAD DE PEDIDOS ÚNICOS
+                # GRÁFICO 1: MONTO NETO CONFIRMADO ($) ESTADO 'M'
                 with col_g1:
-                    fig_area_pedidos = px.bar(
-                        tb_area_graf, x="Area_Salida", y="Pedidos_Rectificados",
-                        color="Area_Salida", text="Pedidos_Rectificados",
-                        title="<b>Cantidad de Pedidos Rectificados por Sector</b>"
+                    tb_area_graf_monto = tb_area_graf.sort_values(by="Monto_Confirmado", ascending=False).reset_index(drop=True)
+                    tb_area_graf_monto["Monto_Texto"] = tb_area_graf_monto["Monto_Confirmado"].apply(lambda x: f"${x:,.0f}")
+
+                    fig_area_monto = px.bar(
+                        tb_area_graf_monto, x="Area_Salida", y="Monto_Confirmado",
+                        color="Area_Salida", text="Monto_Texto",
+                        title="<b>Monto Neto Confirmado ($) Estado 'M' por Sector</b>"
                     )
-                    fig_area_pedidos.update_traces(textposition='outside')
-                    fig_area_pedidos.update_layout(
+                    fig_area_monto.update_traces(textposition='outside')
+                    fig_area_monto.update_layout(
                         xaxis_title="Área de Salida", 
-                        yaxis_title="Cantidad de Pedidos",
+                        yaxis_title="Monto Confirmado ($)",
                         height=390, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                         showlegend=False,
                         xaxis=dict(type='category')
                     )
-                    st.plotly_chart(fig_area_pedidos, use_container_width=True)
+                    st.plotly_chart(fig_area_monto, use_container_width=True)
 
                 # GRÁFICO 2: CANTIDAD DE LÍNEAS RECTIFICADAS POR SECTOR
                 with col_g2:
