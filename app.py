@@ -152,6 +152,13 @@ def cargar_datos_sla():
                     df_rect["Gestion"] = df_rect["Tienda"].map(mapa_gest).fillna("Sin Clasificar")
                     df_rect["Gestion"] = df_rect["Gestion"].replace(["-", "--", "- ", "", "nan", "None"], "Sin Clasificar")
 
+        if not df_rect.empty:
+            if "BULFM" not in df_rect.columns:
+                if "UxM" in df_rect.columns and "UxB" in df_rect.columns:
+                    df_rect["BULFM"] = df_rect.apply(lambda r: (r["UxM"] / r["UxB"]) if r["UxB"] > 0 else 1.0, axis=1)
+                else:
+                    df_rect["BULFM"] = 1.0
+
         return df_sla, df_rect
     return pd.DataFrame(), pd.DataFrame()
 
@@ -257,7 +264,7 @@ try:
             orden_cas_filtro = [
                 "Pedido Perfecto", "Sobrante Neto", 
                 "Sustitución Misma Subfamilia", "Sustitución Distinta Subfamilia", 
-                "Falta/Sobra", "Faltante Neto", "Formato no entregado", "Faltante UxB", 
+                "Falta/Sobra", "Faltante Neto", "Formato no entregado", "Error facturación master", 
                 "Etiquetas Cambiadas"
             ]
             casuisticas_presentes = [c for c in orden_cas_filtro if c in df_sla["Casuistica"].dropna().unique()]
@@ -432,14 +439,14 @@ try:
             colores_cas = {
                 "Sobrante Neto": "#0077B6", "Sustitución Misma Subfamilia": "#80ED99",
                 "Sustitución Distinta Subfamilia": "#FF9E00", "Falta/Sobra": "#4CC9F0", 
-                "Faltante Neto": "#E63946", "Formato no entregado": "#FFE066", "Faltante UxB": "#7209B7", 
+                "Faltante Neto": "#E63946", "Formato no entregado": "#FFE066", "Error facturación master": "#7209B7", 
                 "Etiquetas Cambiadas": "#2B2D42"
             }
 
             fig_comb = make_subplots(specs=[[{"secondary_y": True}]])
             casuisticas_orden = [
                 "Sobrante Neto", "Sustitución Misma Subfamilia", "Sustitución Distinta Subfamilia", 
-                "Falta/Sobra", "Faltante Neto", "Formato no entregado", "Faltante UxB", "Etiquetas Cambiadas"
+                "Falta/Sobra", "Faltante Neto", "Formato no entregado", "Error facturación master", "Etiquetas Cambiadas"
             ]
             
             for cas in casuisticas_orden:
@@ -671,7 +678,7 @@ try:
             orden_cas = [
                 "Pedido Perfecto", "Sobrante Neto", 
                 "Sustitución Misma Subfamilia", "Sustitución Distinta Subfamilia", 
-                "Falta/Sobra", "Faltante Neto", "Formato no entregado", "Faltante UxB", 
+                "Falta/Sobra", "Faltante Neto", "Formato no entregado", "Error facturación master", 
                 "Etiquetas Cambiadas"
             ]
             cas_sum["Casuistica_Cat"] = pd.Categorical(cas_sum["Casuistica"], categories=orden_cas, ordered=True)
@@ -706,7 +713,7 @@ try:
                 {"Casuística Operativa": "Falta/Sobra", "Descuento Aplicado": "-5.5 Pts", "Puntaje por Pedido": "4.5 / 10", "Simplificado": "Pedido con rectificación de falta y sobra"},
                 {"Casuística Operativa": "Faltante Neto", "Descuento Aplicado": "-6.0 Pts", "Puntaje por Pedido": "4.0 / 10", "Simplificado": "Pedido con rectificación de solo falta"},
                 {"Casuística Operativa": "Formato no entregado", "Descuento Aplicado": "-6.0 Pts", "Puntaje por Pedido": "4.0 / 10", "Simplificado": "Pedido con rectificación de solo falta de más de 10 líneas"},
-                {"Casuística Operativa": "Faltante UxB", "Descuento Aplicado": "-6.0 Pts", "Puntaje por Pedido": "4.0 / 10", "Simplificado": "Pedido con rectificación de falta en bultos Master"},
+                {"Casuística Operativa": "Error facturación master", "Descuento Aplicado": "-6.0 Pts", "Puntaje por Pedido": "4.0 / 10", "Simplificado": "Pedido con rectificación de falta en bultos Master"},
                 {"Casuística Operativa": "Etiquetas Cambiadas", "Descuento Aplicado": "-10.0 Pts", "Puntaje por Pedido": "0.0 / 10", "Simplificado": "Faltas y sobras simultáneas mayores o iguales a 12 líneas rectificadas"}
             ])
             st.dataframe(matriz_p, hide_index=True)
@@ -727,7 +734,7 @@ try:
                 "Todas las Casuísticas",
                 "Sobrante Neto", "Sustitución Misma Subfamilia", 
                 "Sustitución Distinta Subfamilia", "Falta/Sobra", 
-                "Faltante Neto", "Formato no entregado", "Faltante UxB", 
+                "Faltante Neto", "Formato no entregado", "Error facturación master", 
                 "Etiquetas Cambiadas"
             ]
             casuisticas_presentes_tab3 = [c for c in orden_cas_tab3 if c == "Todas las Casuísticas" or c in df_sla["Casuistica"].dropna().unique()]
@@ -896,7 +903,7 @@ try:
 
                     cols_rect_disp = [
                         "Almacen", "Pedido", "Area_Salida", "Nº Rectificación", "Fecha de Grabación", "Artículo", 
-                        "Descripción", "Familia", "Subfamilia", "Es_Master", "Motivo", "Procedencia", "Estado"
+                        "Descripción", "UxB", "BULFM", "Es_Master", "Motivo", "Procedencia", "Estado"
                     ]
 
                     if col_unid_grab:
@@ -915,6 +922,8 @@ try:
                         "Area_Salida": "Área de Salida",
                         "Nº Rectificación": "N° Rectif.",
                         "Fecha de Grabación": "Fecha Grabación",
+                        "UxB": "UxB",
+                        "BULFM": "BxM",
                         "Es_Master": "Master",
                         "Monto_Signed": "Monto ($)"
                     }
@@ -938,6 +947,8 @@ try:
                             "Descripción": st.column_config.Column("Producto / Descripción", width="large"),
                             "Familia": st.column_config.Column("Familia", width="medium"),
                             "Subfamilia": st.column_config.Column("Subfamilia", width="medium"),
+                            "UxB": st.column_config.NumberColumn("UxB", format="%.0f", width="small"),
+                            "BxM": st.column_config.NumberColumn("BxM", format="%.0f", width="small"),
                             "Master": st.column_config.Column("Master", width="small"),
                             "Motivo": st.column_config.Column("Motivo", width="small"),
                             "Procedencia": st.column_config.Column("Procedencia", width="small"),
@@ -1063,18 +1074,18 @@ try:
                     st.markdown("---")
                     
                     tiendas_sust_opciones = sorted([str(x) for x in df_sust_analisis["Tienda"].dropna().unique() if str(x) != "nan"])
-                    opciones_tienda_sust = ["Ninguna", "Todas las Tiendas"] + tiendas_sust_opciones
+                    opciones_tienda_sust = ["Todas las Tiendas"] + tiendas_sust_opciones
                     
                     col_sel_t, col_input_t = st.columns([2, 1])
                     with col_sel_t:
-                        t_sust_sel = st.selectbox("Seleccionar Tienda a Auditar:", opciones_tienda_sust, index=0)
+                        t_sust_sel = st.selectbox("Seleccionar Tienda a Auditar (Pestaña Sustituciones):", opciones_tienda_sust, index=0)
                     with col_input_t:
                         t_escribir = st.text_input("✍️ O escribir Nº de Tienda directamente:", "", help="Si escribes aquí un número de tienda, se aplicará directamente el filtro sobre las tablas inferiores.")
 
-                    tienda_final_filtro = None
+                    tienda_final_filtro = "Todas las Tiendas"
                     if t_escribir.strip():
                         tienda_final_filtro = t_escribir.strip()
-                    elif t_sust_sel != "Ninguna":
+                    elif t_sust_sel:
                         tienda_final_filtro = t_sust_sel
 
                     st.markdown("### 📦 Pedidos con Mayor Diferencia Total de Pérdida")
@@ -1090,25 +1101,7 @@ try:
 2. Monto Sobra ($): Suma del importe abonado en ítems sobrantes.
 3. Diferencia Neta Confirmada ($): Pérdida monetaria neta correspondiente exclusivamente a rectificaciones confirmadas por tienda (Estado 'M')."""
 
-                    if tienda_final_filtro is None:
-                        st.info("👈 Selecciona una **Tienda** en el desplegable o escribe su número para mostrar el listado de pedidos y detalle.")
-                        
-                        df_vacio_pedidos = pd.DataFrame(columns=cols_ped_top)
-                        st.dataframe(df_vacio_pedidos, hide_index=True)
-
-                        st.markdown("---")
-                        
-                        st.markdown("### 📋 Detalle Individual por Tienda, Pedido y Artículos de Sustitución", help=glosario_sust_txt)
-                        
-                        cols_detalle_sust = [
-                            "Almacén", "Tienda", "Pedido", "Área de Salida",
-                            "SKU Faltante", "Producto Faltante", "Monto Faltante ($)", 
-                            "SKU Sobrante", "Producto Sobrante", "Monto Sobrante ($)", 
-                            "Diferencia Neta Confirmada ($)"
-                        ]
-                        df_vacio_detalle = pd.DataFrame(columns=cols_detalle_sust)
-                        st.dataframe(df_vacio_detalle, hide_index=True)
-                    else:
+                    if True:
                         df_pedidos_top_perdida = df_sust_analisis.groupby(["Almacén", "Tienda", "Pedido", "Área de Salida"], as_index=False).agg(
                             Monto_Falta_Total=("Monto Faltante ($)", "sum"),
                             Monto_Sobra_Total=("Monto Sobrante ($)", "sum"),
@@ -1205,6 +1198,19 @@ try:
 
             if not df_rect.empty:
                 df_r_area = df_rect.copy()
+
+                # Filtro por Tienda en Hoja 5
+                tiendas_area_opt = ["Todas las Tiendas"] + sorted([str(x) for x in df_r_area["Tienda"].dropna().unique() if str(x) != "nan"]) if "Tienda" in df_r_area.columns else ["Todas las Tiendas"]
+                col_t_h5_1, col_t_h5_2 = st.columns([2, 1])
+                with col_t_h5_1:
+                    t_area_sel = st.selectbox("Filtrar por Tienda (Hoja 5):", tiendas_area_opt, index=0)
+                with col_t_h5_2:
+                    t_area_escribir = st.text_input("✍️ O escribir Nº de Tienda (Hoja 5):", "")
+
+                if t_area_escribir.strip() and "Tienda" in df_r_area.columns:
+                    df_r_area = df_r_area[df_r_area["Tienda"].astype(str).str.contains(t_area_escribir.strip(), case=False, na=False)]
+                elif t_area_sel != "Todas las Tiendas" and "Tienda" in df_r_area.columns:
+                    df_r_area = df_r_area[df_r_area["Tienda"].astype(str) == str(t_area_sel)]
                 
                 # Excluir de forma predeterminada las rectificaciones rechazadas 'R'
                 if "Estado" in df_r_area.columns:

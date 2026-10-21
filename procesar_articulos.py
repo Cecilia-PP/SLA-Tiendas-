@@ -16,7 +16,7 @@ PATH_PARQUET_SLA = os.path.join(DIR_BASE, "Tablero_SLA_Pedidos.parquet")
 PATH_PARQUET_ANUL = os.path.join(DIR_BASE, "Tablero_Anulaciones_Detalle.parquet")
 
 print("==================================================================")
-print("🚀 EJECUTANDO ETL CON FALTANTE UXB Y FORMATO NO ENTREGADO (> 10 LÍNEAS)")
+print("🚀 EJECUTANDO ETL CON ERROR FACTURACIÓN MASTER, BULFM Y FORMATO NO ENTREGADO")
 print(f"📂 DIRECTORIO BASE: {DIR_BASE}")
 print("==================================================================")
 
@@ -174,34 +174,71 @@ if path_maestro:
     except Exception as e:
         print(f"    ⚠️ Error Maestro: {e}")
 
-# 4.1. CARGAR MAESTRO DE EMPAQUE (UxB 503.csv)
-archivos_uxb = glob.glob(os.path.join(DIR_DATOS, "*[Uu][Xx][Bb]*.csv")) + glob.glob(os.path.join(DIR_BASE, "*[Uu][Xx][Bb]*.csv"))
+# 4.1. CARGAR MAESTRO DE EMPAQUE (UXB Y BULFM)
+archivos_uxb = glob.glob(os.path.join(DIR_DATOS, "*[Uu][Xx][Bb]*.csv")) + glob.glob(os.path.join(DIR_BASE, "*[Uu][Xx][Bb]*.csv")) + glob.glob(os.path.join(DIR_DATOS, "*[Ee]mpaque*.csv")) + glob.glob(os.path.join(DIR_BASE, "*[Ee]mpaque*.csv"))
 mapa_uxb = {}
 
 if archivos_uxb:
     try:
-        print(f"📌 Cargando maestro de formatos de empaque: {archivos_uxb[0]}")
-        df_uxb = pd.read_csv(archivos_uxb[0], sep=None, engine="python", encoding="latin1", dtype=str, on_bad_lines="skip")
+        f_uxb_path = sorted(list(set(archivos_uxb)))[0]
+        print(f"📌 Cargando maestro de formatos de empaque: {f_uxb_path}")
+        df_uxb = pd.read_csv(f_uxb_path, sep=None, engine="python", encoding="latin1", dtype=str, on_bad_lines="skip")
         df_uxb.columns = df_uxb.columns.str.strip()
         
-        col_art_uxb = [c for c in df_uxb.columns if any(k in c.lower() for k in ["art", "sku", "cod"])][0]
-        df_uxb["SKU_Clean"] = df_uxb[col_art_uxb].astype(str).str.strip().str.lstrip("0")
+        col_art_uxb = [c for c in df_uxb.columns if any(k in c.lower() for k in ["art", "sku", "cod", "artículo", "articulo"])][0]
+        col_uxb = [c for c in df_uxb.columns if "uxb" in c.lower()][0]
         
-        for c in ["BxF", "UxB", "UxM"]:
-            if c in df_uxb.columns:
-                df_uxb[c] = pd.to_numeric(df_uxb[c].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
-                
-        # Consolidar por SKU seleccionando el valor máximo de UxM
-        df_uxb_grouped = df_uxb.groupby("SKU_Clean").agg({
-            "UxB": "max",
-            "UxM": "max",
-            "BxF": "max"
-        }).reset_index()
+        cols_fmt = [c for c in df_uxb.columns if any(k in c.lower() for k in ["formato", "fmt", "tipo"])]
+        col_fmt = cols_fmt[0] if cols_fmt else None
         
-        mapa_uxb = df_uxb_grouped.set_index("SKU_Clean")[["BxF", "UxB", "UxM"]].to_dict(orient="index")
-        print(f"    ✓ Maestro UxB/UxM consolidado exitosamente con {len(mapa_uxb):,} artículos únicos.")
+        cols_bulfm = [c for c in df_uxb.columns if any(k in c.lower() for k in ["bulfm", "bultos por formato", "bulto_formato", "bultos_formato", "uxm"])]
+        col_bulfm = cols_bulfm[0] if cols_bulfm else None
+        
+        df_uxb["SKU_Clean"] = df_uxb[col_art_uxb].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0")
+        df_uxb["UxB_Num"] = pd.to_numeric(df_uxb[col_uxb].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
+        
+        if col_bulfm:
+            df_uxb["BULFM_Num"] = pd.to_numeric(df_uxb[col_bulfm].astype(str).str.replace(",", "."), errors="coerce").fillna(1.0)
+        else:
+            df_uxb["BULFM_Num"] = 1.0
+
+        if col_fmt:
+            df_uxb["Formato_Clean"] = df_uxb[col_fmt].astype(str).str.strip().str.upper()
+        else:
+            df_uxb["Formato_Clean"] = "B"
+
+        # Calcular UxM (Unidades por Máster) = UxB * BULFM cuando Formato == 'M'
+        df_uxb["UxM_Num"] = df_uxb.apply(lambda r: r["UxB_Num"] * r["BULFM_Num"] if r["Formato_Clean"] == "M" else r["UxB_Num"], axis=1)
+
+        # Agrupar por SKU para consolidar UxB (de formato B) y UxM / BULFM (de formato M)
+        uxb_dict = {}
+        for sku, grp in df_uxb.groupby("SKU_Clean"):
+            # UxB principal de Formato B
+            grp_b = grp[grp["Formato_Clean"] == "B"]
+            uxb_val = grp_b["UxB_Num"].max() if not grp_b.empty else grp["UxB_Num"].max()
+            
+            # UxM y BULFM de Formato M
+            grp_m = grp[grp["Formato_Clean"] == "M"]
+            if not grp_m.empty:
+                bulfm_val = grp_m["BULFM_Num"].max()
+                uxm_val = grp_m["UxM_Num"].max()
+                has_master = True
+            else:
+                bulfm_val = 1.0
+                uxm_val = uxb_val
+                has_master = False
+
+            uxb_dict[sku] = {
+                "UxB": uxb_val,
+                "BULFM": bulfm_val,
+                "UxM": uxm_val,
+                "Tiene_Master": has_master
+            }
+
+        mapa_uxb = uxb_dict
+        print(f"    ✓ Maestro UxB/BULFM consolidado exitosamente con {len(mapa_uxb):,} artículos únicos.")
     except Exception as e:
-        print(f"    ⚠️ Warning cargando maestro UxB: {e}")
+        print(f"    ⚠️ Warning cargando maestro UxB/BULFM: {e}")
 
 # 5. CARGAR Y FILTRAR RECTIFICACIONES
 archivos_rect = glob.glob(os.path.join(DIR_DATOS, "*[Rr]ectif*.csv")) + glob.glob(os.path.join(DIR_BASE, "*[Rr]ectif*.csv"))
@@ -335,8 +372,14 @@ if list_rect:
         d = mapa_uxb.get(sku_c, {})
         return float(d.get("UxM", 0.0))
 
+    def obtener_bulfm(sku):
+        sku_c = str(sku).strip().lstrip("0")
+        d = mapa_uxb.get(sku_c, {})
+        return float(d.get("BULFM", 1.0))
+
     df_rect_all["UxB"] = df_rect_all[col_art_rect].apply(obtener_uxb)
     df_rect_all["UxM"] = df_rect_all[col_art_rect].apply(obtener_uxm)
+    df_rect_all["BULFM"] = df_rect_all[col_art_rect].apply(obtener_bulfm)
     
     # Marcador de Unidad Suelta: Unidades_Num < UxB (cuando UxB > 1)
     df_rect_all["Es_Unidad_Suelta"] = (df_rect_all["UxB"] > 1.0) & (df_rect_all["Unidades_Num"] > 0.0) & (df_rect_all["Unidades_Num"] < df_rect_all["UxB"])
@@ -390,9 +433,9 @@ if list_rect:
         cant_f = len(f_group)
         cant_s = len(s_group)
         
-        # 1. FALTANTE UXB (100% de rectificaciones por desvío Máster)
+        # 1. ERROR FACTURACIÓN MASTER (100% de rectificaciones por desvío Máster)
         if lineas_uxb > 0 and lineas_uxb == tot_lineas:
-            cas, pts = "Faltante UxB", 4.0
+            cas, pts = "Error facturación master", 4.0
         elif cant_f > 0 and cant_s > 0:
             if tot_lineas >= 12:
                 cas, pts = "Etiquetas Cambiadas", 0.0
