@@ -35,8 +35,8 @@ def login():
     with col2:
         with st.form("form_login"):
             st.subheader("Iniciar Sesión")
-            usuario_input = st.text_input("Usuario")
-            password_input = st.text_input("Contraseña", type="password")
+            usuario_input = st.text_input("Usuario", key="login_usr")
+            password_input = st.text_input("Contraseña", type="password", key="login_pwd")
             submit_button = st.form_submit_button("Ingresar 🚀")
 
             if submit_button:
@@ -880,7 +880,7 @@ try:
                 st.subheader("🔎 Detalle de Rectificaciones Registradas (Líneas de SKUs)", help=glosario_txt)
 
                 if not df_aud_rect.empty:
-                    busqueda_pedido = st.text_input("🔍 Filtrar exclusivamente por Número de Pedido:", "")
+                    busqueda_pedido = st.text_input("🔍 Filtrar exclusivamente por Número de Pedido:", "", key="txt_ped_h3_val")
                     if busqueda_pedido:
                         df_aud_rect = df_aud_rect[
                             df_aud_rect["Pedido"].astype(str).str.contains(busqueda_pedido.strip(), case=False, na=False)
@@ -1100,7 +1100,7 @@ try:
                     with col_sel_t:
                         t_sust_sel = st.selectbox("Seleccionar Tienda a Auditar:", opciones_tienda_sust, index=0)
                     with col_input_t:
-                        t_escribir = st.text_input("✍️ O escribir Nº de Tienda directamente:", "", help="Si escribes aquí un número de tienda, se aplicará directamente el filtro sobre las tablas inferiores.")
+                        t_escribir = st.text_input("✍️ O escribir Nº de Tienda directamente:", "", help="Si escribes aquí un número de tienda, se aplicará directamente el filtro sobre las tablas inferiores.", key="txt_tienda_h4")
 
                     tienda_final_filtro = "Todas las Tiendas"
                     if t_escribir.strip():
@@ -1171,7 +1171,7 @@ try:
                                 df_sust_analisis["Tienda"].astype(str).str.contains(tienda_final_filtro, case=False, na=False)
                             ].copy()
 
-                        busqueda_pedido_sust = st.text_input("🔍 Filtrar exclusivamente por Número de Pedido:", "")
+                        busqueda_pedido_sust = st.text_input("🔍 Filtrar exclusivamente por Número de Pedido:", "", key="txt_ped_h4_val")
                         if busqueda_pedido_sust:
                             df_sust_analisis_filtrada = df_sust_analisis_filtrada[
                                 df_sust_analisis_filtrada["Pedido"].astype(str).str.contains(busqueda_pedido_sust.strip(), case=False, na=False)
@@ -1225,7 +1225,7 @@ try:
                 with col_t_h5_1:
                     t_area_sel = st.selectbox("Filtrar por Tienda:", tiendas_area_opt, index=0)
                 with col_t_h5_2:
-                    t_area_escribir = st.text_input("✍️ O escribir Nº de Tienda:", "")
+                    t_area_escribir = st.text_input("✍️ O escribir Nº de Tienda:", "", key="txt_tienda_h5")
 
                 if t_area_escribir.strip() and "Tienda" in df_r_area.columns:
                     df_r_area = df_r_area[df_r_area["Tienda"].astype(str).str.contains(t_area_escribir.strip(), case=False, na=False)]
@@ -1363,7 +1363,7 @@ try:
                 if area_especifica_sel != "Todas las Áreas":
                     df_r_area_det = df_r_area_det[df_r_area_det["Area_Salida"].astype(str) == str(area_especifica_sel)]
 
-                busqueda_ped_area = st.text_input("🔍 Filtrar exclusivamente por Número de Pedido:", "")
+                busqueda_ped_area = st.text_input("🔍 Filtrar exclusivamente por Número de Pedido:", "", key="txt_ped_h5_val")
                 if busqueda_ped_area:
                     df_r_area_det = df_r_area_det[
                         df_r_area_det["Pedido"].astype(str).str.contains(busqueda_ped_area.strip(), case=False, na=False)
@@ -1494,7 +1494,7 @@ try:
                     if t_suelta_sel != "Todas las Tiendas":
                         df_det_sueltas = df_det_sueltas[df_det_sueltas["Tienda"].astype(str) == str(t_suelta_sel)]
 
-                    busqueda_ped_suelta = st.text_input("🔍 Filtrar por Número de Pedido (Unidades Sueltas):", "")
+                    busqueda_ped_suelta = st.text_input("🔍 Filtrar por Número de Pedido (Unidades Sueltas):", "", key="txt_ped_h6")
                     if busqueda_ped_suelta:
                         df_det_sueltas = df_det_sueltas[
                             df_det_sueltas["Pedido"].astype(str).str.contains(busqueda_ped_suelta.strip(), case=False, na=False)
@@ -1673,7 +1673,7 @@ try:
                     t_anul_sel = st.selectbox("Seleccionar Tienda a Auditar (Anulaciones):", tiendas_anul_opt, index=0)
 
                 with col_anul_p:
-                    busqueda_ped_anul = st.text_input("🔍 Filtrar por Número de Pedido (Anulaciones):", "")
+                    busqueda_ped_anul = st.text_input("🔍 Filtrar por Número de Pedido (Anulaciones):", "", key="txt_ped_h7")
 
                 df_anul_det_filtrado = df_a_view.copy()
 
@@ -1779,7 +1779,7 @@ try:
                 with col_tm_1:
                     t_master_sel = st.selectbox("Filtrar por Tienda:", tiendas_m_opt, index=0)
                 with col_tm_2:
-                    t_master_escribir = st.text_input("✍️ O escribir Nº de Tienda:", "")
+                    t_master_escribir = st.text_input("✍️ O escribir Nº de Tienda:", "", key="txt_tienda_h8_val")
 
                 if t_master_escribir.strip() and "Tienda" in df_m_only.columns:
                     df_m_only = df_m_only[df_m_only["Tienda"].astype(str).str.contains(t_master_escribir.strip(), case=False, na=False)]
@@ -1834,7 +1834,7 @@ try:
                     st.markdown("---")
                     st.markdown("### 🔎 Detalle Individual de Líneas Rectificadas por Error Master")
 
-                    busqueda_ped_m = st.text_input("🔍 Filtrar por Número de Pedido (Líneas Master):", "")
+                    busqueda_ped_m = st.text_input("🔍 Filtrar por Número de Pedido (Líneas Master):", "", key="txt_ped_h8")
                     df_det_m = df_m_only.copy()
                     if busqueda_ped_m:
                         df_det_m = df_det_m[
