@@ -1118,14 +1118,14 @@ try:
                     c_conf3.metric("❌ Tasa de Rechazo", f"{100.0 - pct_acep_sust:.1f}%")
 
                     st.markdown("---")
-                    st.markdown("### 🏆 Top 10 de Tiendas con Mayor Cantidad de Pedidos con Sustituciones")
+                    st.markdown("### 🏪 Resumen por Tienda de Pedidos con Sustituciones")
 
                     def calc_pct_acep_tienda(grp):
                         lin_m = (grp["Estado Falta"] == "M").sum() + (grp["Estado Sobra"] == "M").sum()
                         tot_lin = len(grp) * 2
                         return (lin_m / tot_lin * 100.0) if tot_lin > 0 else 100.0
 
-                    tb_top10_tiendas = df_sust_analisis.groupby("Tienda", as_index=False).apply(
+                    tb_todas_tiendas = df_sust_analisis.groupby("Tienda", as_index=False).apply(
                         lambda g: pd.Series({
                             "Pedidos_Afectados": g["Pedido"].nunique(),
                             "Pct_Aceptacion": calc_pct_acep_tienda(g),
@@ -1134,9 +1134,9 @@ try:
                             "Diferencia_Total_Valor": g["Diferencia Monto Neto ($)"].sum()
                         }),
                         include_groups=False
-                    ).sort_values(by="Pedidos_Afectados", ascending=False).head(10).reset_index(drop=True)
+                    ).sort_values(by="Pedidos_Afectados", ascending=False).reset_index(drop=True)
 
-                    tb_top10_tiendas_disp = tb_top10_tiendas.rename(columns={
+                    tb_todas_tiendas_disp = tb_todas_tiendas.rename(columns={
                         "Tienda": "Tienda",
                         "Pedidos_Afectados": "Pedidos",
                         "Pct_Aceptacion": "% Aceptación",
@@ -1146,7 +1146,7 @@ try:
                     })
 
                     st.dataframe(
-                        tb_top10_tiendas_disp[["Tienda", "Pedidos", "% Aceptación", "Monto Falta ($)", "Monto Sobra ($)", "Diferencia Monto Neto ($)"]],
+                        tb_todas_tiendas_disp[["Tienda", "Pedidos", "% Aceptación", "Monto Falta ($)", "Monto Sobra ($)", "Diferencia Monto Neto ($)"]],
                         hide_index=True,
                         column_config={
                             "Tienda": st.column_config.Column("Tienda", width="medium"),
