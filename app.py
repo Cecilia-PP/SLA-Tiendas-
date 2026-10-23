@@ -268,64 +268,68 @@ try:
             if not df_rect.empty and "Almacen" in df_rect.columns:
                 df_rect = df_rect[df_rect["Almacen"].astype(str).isin(almacen_sel)]
 
-        # 2. FILTRO DE GESTIÓN / ZONA
+        # 2. FILTRO DE GESTIÓN / ZONA EN DESPLEGABLE EXPANDIBLE
         if "Gestion" in df_sla.columns and df_sla["Gestion"].notna().any():
-            gestiones = sorted([str(x) for x in df_sla["Gestion"].dropna().unique()])
-            gestion_sel = st.sidebar.multiselect("Gestión / Zona:", gestiones, default=gestiones)
-            df_sla = df_sla[df_sla["Gestion"].astype(str).isin(gestion_sel)]
-            if not df_rect.empty and "Gestion" in df_rect.columns:
-                df_rect = df_rect[df_rect["Gestion"].astype(str).isin(gestion_sel)]
+            with st.sidebar.expander("🗺️ Gestión / Zona", expanded=False):
+                gestiones = sorted([str(x) for x in df_sla["Gestion"].dropna().unique()])
+                gestion_sel = st.multiselect("Seleccionar Gestión / Zona:", gestiones, default=gestiones, key="ms_gestion_sidebar")
+                df_sla = df_sla[df_sla["Gestion"].astype(str).isin(gestion_sel)]
+                if not df_rect.empty and "Gestion" in df_rect.columns:
+                    df_rect = df_rect[df_rect["Gestion"].astype(str).isin(gestion_sel)]
 
-        # 3. FILTRO DINÁMICO DE ÁREA DE SALIDA
+        # 3. FILTRO DE FRANQUICIADO / SUPERVISOR EN DESPLEGABLE EXPANDIBLE
+        if "Responsable_Tienda" in df_sla.columns and df_sla["Responsable_Tienda"].notna().any():
+            with st.sidebar.expander("👤 Franquiciado / Supervisor", expanded=False):
+                responsables = sorted([str(x) for x in df_sla["Responsable_Tienda"].dropna().unique()])
+                resp_sel = st.multiselect("Seleccionar Supervisor(es):", responsables, default=responsables, key="ms_resp_sidebar")
+                df_sla = df_sla[df_sla["Responsable_Tienda"].astype(str).isin(resp_sel)]
+                if not df_rect.empty and "Responsable_Tienda" in df_rect.columns:
+                    df_rect = df_rect[df_rect["Responsable_Tienda"].astype(str).isin(resp_sel)]
+
+        # 4. FILTRO DE TIENDA EN DESPLEGABLE EXPANDIBLE
+        if "Tienda" in df_sla.columns:
+            with st.sidebar.expander("🏪 Tienda", expanded=False):
+                tiendas = sorted([str(x) for x in df_sla["Tienda"].dropna().unique() if str(x) != "nan"])
+                tienda_sel = st.multiselect("Seleccionar Tienda(s):", tiendas, default=tiendas, key="ms_tienda_sidebar")
+                df_sla = df_sla[df_sla["Tienda"].astype(str).isin(tienda_sel)]
+                if not df_rect.empty and "Tienda" in df_rect.columns:
+                    df_rect = df_rect[df_rect["Tienda"].astype(str).isin(tienda_sel)]
+
+        # 5. FILTRO DINÁMICO DE ÁREA DE SALIDA EN DESPLEGABLE EXPANDIBLE
         areas_sla = set(df_sla["Area_Salida"].dropna().astype(str).unique()) if "Area_Salida" in df_sla.columns else set()
         areas_rect = set(df_rect["Area_Salida"].dropna().astype(str).unique()) if not df_rect.empty and "Area_Salida" in df_rect.columns else set()
-        
         areas_universo = areas_sla.union(areas_rect)
         areas_disponibles = sorted([a for a in areas_universo if a.strip() not in ["19", "24"]])
 
         if areas_disponibles:
-            area_sel = st.sidebar.multiselect("Área de Salida:", areas_disponibles, default=areas_disponibles)
-            if "Area_Salida" in df_sla.columns:
-                df_sla = df_sla[df_sla["Area_Salida"].astype(str).isin(area_sel)]
-            if not df_rect.empty and "Area_Salida" in df_rect.columns:
-                df_rect = df_rect[df_rect["Area_Salida"].astype(str).isin(area_sel)]
+            with st.sidebar.expander("📦 Área de Salida", expanded=False):
+                area_sel = st.multiselect("Seleccionar Área(s) de Salida:", areas_disponibles, default=areas_disponibles, key="ms_area_sidebar")
+                if "Area_Salida" in df_sla.columns:
+                    df_sla = df_sla[df_sla["Area_Salida"].astype(str).isin(area_sel)]
+                if not df_rect.empty and "Area_Salida" in df_rect.columns:
+                    df_rect = df_rect[df_rect["Area_Salida"].astype(str).isin(area_sel)]
 
-        # 4. FILTRO DE FRANQUICIADO / SUPERVISOR
-        if "Responsable_Tienda" in df_sla.columns and df_sla["Responsable_Tienda"].notna().any():
-            responsables = sorted([str(x) for x in df_sla["Responsable_Tienda"].dropna().unique()])
-            resp_sel = st.sidebar.multiselect("Franquiciado / Supervisor:", responsables, default=responsables)
-            df_sla = df_sla[df_sla["Responsable_Tienda"].astype(str).isin(resp_sel)]
-            if not df_rect.empty and "Responsable_Tienda" in df_rect.columns:
-                df_rect = df_rect[df_rect["Responsable_Tienda"].astype(str).isin(resp_sel)]
-
-        # 5. FILTRO DE TIENDA
-        if "Tienda" in df_sla.columns:
-            tiendas = sorted([str(x) for x in df_sla["Tienda"].dropna().unique() if str(x) != "nan"])
-            tienda_sel = st.sidebar.multiselect("Tienda:", tiendas, default=tiendas)
-            df_sla = df_sla[df_sla["Tienda"].astype(str).isin(tienda_sel)]
-            if not df_rect.empty and "Tienda" in df_rect.columns:
-                df_rect = df_rect[df_rect["Tienda"].astype(str).isin(tienda_sel)]
-
-        # 6. FILTRO DE CASUÍSTICA (GLOBAL SIDEBAR)
+        # 6. FILTRO DE CASUÍSTICA / ESTADO PEDIDO EN DESPLEGABLE EXPANDIBLE
         if "Casuistica" in df_sla.columns:
-            orden_cas_filtro = [
-                "Pedido Perfecto", "Sobrante Neto", 
-                "Sustitución Misma Subfamilia", "Sustitución Distinta Subfamilia", 
-                "Falta/Sobra", "Faltante Neto", "Formato no entregado", "Error facturación master", 
-                "Etiquetas Cambiadas"
-            ]
-            casuisticas_presentes = [c for c in orden_cas_filtro if c in df_sla["Casuistica"].dropna().unique()]
-            otras_cas = [c for c in df_sla["Casuistica"].dropna().unique() if c not in casuisticas_presentes]
-            casuisticas_opciones = casuisticas_presentes + otras_cas
+            with st.sidebar.expander("📋 Casuística / Estado Pedido", expanded=False):
+                orden_cas_filtro = [
+                    "Pedido Perfecto", "Sobrante Neto", 
+                    "Sustitución Misma Subfamilia", "Sustitución Distinta Subfamilia", 
+                    "Falta/Sobra", "Faltante Neto", "Formato no entregado", "Error facturación master", 
+                    "Etiquetas Cambiadas"
+                ]
+                casuisticas_presentes = [c for c in orden_cas_filtro if c in df_sla["Casuistica"].dropna().unique()]
+                otras_cas = [c for c in df_sla["Casuistica"].dropna().unique() if c not in casuisticas_presentes]
+                casuisticas_opciones = casuisticas_presentes + otras_cas
 
-            casuistica_sel = st.sidebar.multiselect("Casuística / Estado Pedido:", casuisticas_opciones, default=casuisticas_opciones)
-            df_sla = df_sla[df_sla["Casuistica"].isin(casuistica_sel)]
-            
-            if not df_rect.empty:
-                pedidos_validos_cas = set(df_sla["Pedido"].dropna().unique())
-                df_rect = df_rect[df_rect["Pedido"].isin(pedidos_validos_cas)]
+                casuistica_sel = st.multiselect("Seleccionar Casuística(s):", casuisticas_opciones, default=casuisticas_opciones, key="ms_casuistica_sidebar")
+                df_sla = df_sla[df_sla["Casuistica"].isin(casuistica_sel)]
+                
+                if not df_rect.empty:
+                    pedidos_validos_cas = set(df_sla["Pedido"].dropna().unique())
+                    df_rect = df_rect[df_rect["Pedido"].isin(pedidos_validos_cas)]
 
-        # --- FILTRO DE ESTADO DE RECTIFICACIÓN (M / P / R) ---
+        # 7. FILTRO DE ESTADO DE RECTIFICACIÓN (M / P / R)
         if not df_rect.empty and "Estado" in df_rect.columns:
             st.sidebar.markdown("---")
             st.sidebar.header("📋 Estado de Rectificación")
@@ -338,24 +342,24 @@ try:
             )
             df_rect = df_rect[df_rect["Estado"].isin(estado_sel)]
 
+        # 8. FILTROS MAESTROS EN DESPLEGABLE EXPANDIBLE
         if not df_rect.empty:
             st.sidebar.markdown("---")
-            st.sidebar.header("🏷️ Filtros del Maestro")
+            with st.sidebar.expander("🏷️ Filtros del Maestro", expanded=False):
+                if "Familia" in df_rect.columns and df_rect["Familia"].notna().any():
+                    familias = sorted([str(x) for x in df_rect["Familia"].dropna().unique()])
+                    fam_sel = st.multiselect("Familia:", familias, default=familias, key="ms_fam_sidebar")
+                    df_rect = df_rect[df_rect["Familia"].astype(str).isin(fam_sel)]
 
-            if "Familia" in df_rect.columns and df_rect["Familia"].notna().any():
-                familias = sorted([str(x) for x in df_rect["Familia"].dropna().unique()])
-                fam_sel = st.sidebar.multiselect("Familia:", familias, default=familias)
-                df_rect = df_rect[df_rect["Familia"].astype(str).isin(fam_sel)]
+                if "Subfamilia" in df_rect.columns and df_rect["Subfamilia"].notna().any():
+                    subfamilias = sorted([str(x) for x in df_rect["Subfamilia"].dropna().unique()])
+                    subfam_sel = st.multiselect("Subfamilia:", subfamilias, default=subfamilias, key="ms_subfam_sidebar")
+                    df_rect = df_rect[df_rect["Subfamilia"].astype(str).isin(subfam_sel)]
 
-            if "Subfamilia" in df_rect.columns and df_rect["Subfamilia"].notna().any():
-                subfamilias = sorted([str(x) for x in df_rect["Subfamilia"].dropna().unique()])
-                subfam_sel = st.sidebar.multiselect("Subfamilia:", subfamilias, default=subfamilias)
-                df_rect = df_rect[df_rect["Subfamilia"].astype(str).isin(subfam_sel)]
-
-            if "Es_Master" in df_rect.columns and df_rect["Es_Master"].notna().any():
-                masters = sorted([str(x) for x in df_rect["Es_Master"].dropna().unique()])
-                master_sel = st.sidebar.multiselect("Producto Master (Sí/No):", masters, default=masters)
-                df_rect = df_rect[df_rect["Es_Master"].astype(str).isin(master_sel)]
+                if "Es_Master" in df_rect.columns and df_rect["Es_Master"].notna().any():
+                    masters = sorted([str(x) for x in df_rect["Es_Master"].dropna().unique()])
+                    master_sel = st.multiselect("Producto Master (Sí/No):", masters, default=masters, key="ms_master_sidebar")
+                    df_rect = df_rect[df_rect["Es_Master"].astype(str).isin(master_sel)]
 
             pedidos_filtrados_maestro = set(df_rect["Pedido"].dropna().unique())
             df_sla = df_sla[df_sla["Pedido"].isin(pedidos_filtrados_maestro) | (df_sla["Casuistica"] == "Pedido Perfecto")]
@@ -1572,8 +1576,8 @@ try:
 
         # HOJA 6: ANÁLISIS DE RECTIFICACIONES DE PORTAL
         with tab6:
-            st.subheader("❌ Rectificaciones del Portal: Análisis de Causas Anuladas y Aprobadas")
-            st.markdown("Auditoría independiente fuera del cálculo del SLA basada **exclusivamente en la extracción del portal de rectificaciones**. Esta vista procesa la totalidad de reclamos (**Anuladas** y **Aprobadas**), analizando sus motivos registrados y su distribución por Almacén, Área de Salida, Tienda y Mes.")
+            st.subheader("❌ Rectificaciones del Portal: Análisis de Causas Anuladas y Aprobadas \nRectificaciones Anuladas y Aprobadas")
+            st.markdown("Analisis independiente fuera del cálculo del SLA basada exclusivamente en los datos del portal de rectificaciones. Esta vista procesa la totalidad de las rectificaciones Anuladas y Aprobadas, analizando sus motivos registrados y su distribución por Almacén, Área de Salida, Tienda y Mes.")
 
             if not df_anul.empty:
                 df_portal_csv = df_anul.copy()
@@ -1618,12 +1622,24 @@ try:
 
                 df_portal_csv["Etiqueta_Almacen"] = "Almacén " + df_portal_csv["Almacen"].astype(str)
 
-                # FILTRO GLOBAL DE ALMACÉN PARA LA HOJA 6
-                almacenes_portal_opt = ["Todos los Almacenes"] + sorted([str(x) for x in df_portal_csv["Almacen"].dropna().unique() if str(x) != "nan"])
-                alm_portal_sel = st.selectbox("🏭 Filtrar Hoja por Almacén / CD:", almacenes_portal_opt, index=0, key="sb_alm_portal_h6")
+                # FILTRO DE ALMACÉN ESTILO LISTA DESPLEGABLE MÚLTIPLE (POPOVER)
+                almacenes_portal_opt = sorted([str(x) for x in df_portal_csv["Almacen"].dropna().unique() if str(x) != "nan"])
+                
+                col_m_alm, col_m_space = st.columns([2.5, 1.5])
+                with col_m_alm:
+                    with st.popover("🏭 Filtrar por Almacén / CD (Selección Múltiple)", use_container_width=True):
+                        st.markdown("**Lista de Almacenes / CDs**")
+                        alm_todos = st.checkbox("Seleccionar Todos los Almacenes", value=True, key="chk_all_alm_h6")
+                        alm_portal_sel = []
+                        for alm in almacenes_portal_opt:
+                            chk_val = st.checkbox(f"Almacén {alm}", value=alm_todos, key=f"chk_alm_{alm}_h6")
+                            if chk_val:
+                                alm_portal_sel.append(alm)
 
-                if alm_portal_sel != "Todos los Almacenes":
-                    df_portal_csv = df_portal_csv[df_portal_csv["Almacen"].astype(str) == str(alm_portal_sel)].copy()
+                if alm_portal_sel:
+                    df_portal_csv = df_portal_csv[df_portal_csv["Almacen"].astype(str).isin(alm_portal_sel)].copy()
+                else:
+                    df_portal_csv = df_portal_csv.iloc[0:0].copy()
 
                 # Signo: Falta = +, Sobra = -
                 if "Tipo" in df_portal_csv.columns and "Monto" in df_portal_csv.columns:
@@ -1657,32 +1673,32 @@ try:
 
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("❌ Líneas Anuladas / Rechazadas", f"{tot_lin_anul_csv:,}")
-                c2.metric("💸 Importe Total Anulado ($)", f"${tot_monto_anul_csv:,.2f}")
+                c2.metric("💸 Importe Total Anulado ($)", f"${tot_monto_anul_csv:,.0f}")
                 c3.metric("✅ Líneas Aprobadas / Confirmadas", f"{tot_lin_aprob_csv:,}")
-                c4.metric("💰 Importe Total Aprobado ($)", f"${tot_monto_aprob_csv:,.2f}")
+                c4.metric("💰 Importe Total Aprobado ($)", f"${tot_monto_aprob_csv:,.0f}")
 
                 st.markdown("---")
 
                 # ==============================================================
-                # 1. SECCIÓN: CAUSAS DE ANULACIÓN (RECHAZADAS / ANULADAS)
+                # 1. SECCIÓN: CAUSAS DE ANULACIÓN (ANULADAS)
                 # ==============================================================
-                st.markdown("### 📊 1. Distribución Porcentual (%) y Cantidad por Causa de Anulación (Anuladas)")
+                st.markdown("### 📊 Distribución Porcentual y Cantidad por Causa de Anulación")
 
                 if not df_csv_anul.empty:
                     causas_anul_unicas = sorted([str(x) for x in df_csv_anul["Motivo_Norm"].unique() if str(x).strip() != ""])
-                    opciones_causas_anul = ["Todas las Causas"] + causas_anul_unicas
 
-                    col_fa1, col_fa2 = st.columns([2, 2])
+                    col_fa1, col_fa2 = st.columns([2.5, 1.5])
                     with col_fa1:
-                        causa_sel_anul = st.selectbox(
-                            "🔍 Filtrar Sección Anuladas por Causa:",
-                            options=opciones_causas_anul,
-                            index=0,
-                            key="sb_causa_anul_csv"
-                        )
+                        with st.popover("🔍 Filtrar Sección Anuladas por Causa (Selección Múltiple)", use_container_width=True):
+                            st.markdown("**Lista de Causas de Anulación**")
+                            causa_anul_all = st.checkbox("Seleccionar Todas las Causas de Anulación", value=True, key="chk_all_causa_anul")
+                            causas_sel_anul = []
+                            for idx, c_anul in enumerate(causas_anul_unicas):
+                                chk_c = st.checkbox(c_anul, value=causa_anul_all, key=f"chk_anul_{idx}")
+                                if chk_c:
+                                    causas_sel_anul.append(c_anul)
 
-                    # EL FILTRO DE CAUSA APLICA A TODOS LOS CUADROS Y TABLAS DE LA SECCIÓN DE ANULADAS
-                    df_csv_anul_sec1 = df_csv_anul[df_csv_anul["Motivo_Norm"] == causa_sel_anul].copy() if causa_sel_anul != "Todas las Causas" else df_csv_anul.copy()
+                    df_csv_anul_sec1 = df_csv_anul[df_csv_anul["Motivo_Norm"].isin(causas_sel_anul)].copy() if causas_sel_anul else df_csv_anul.iloc[0:0].copy()
 
                     if not df_csv_anul_sec1.empty:
                         # 1. Gráfico
@@ -1707,7 +1723,7 @@ try:
                             x="Nombre_Mes",
                             y="Porcentaje",
                             color="Etiqueta_Almacen",
-                            title=f"<b>Distribución Porcentual (%) y Cantidad por Almacén - Anuladas ({causa_sel_anul})</b>",
+                            title="<b>Distribución Porcentual y Cantidad por Almacén - Anuladas</b>",
                             text="Etiqueta_Texto",
                             color_discrete_map=mapa_colores_alm_g,
                             barmode="stack",
@@ -1727,8 +1743,8 @@ try:
                         st.plotly_chart(fig_apilado_anul, use_container_width=True)
 
                         st.markdown("---")
-                        # 2. Resumen por Causa (Filtrado)
-                        st.markdown(f"#### 📋 Resumen por Causa de Anulación ({causa_sel_anul})")
+                        # 2. Resumen por Causa
+                        st.markdown("#### 📋 Resumen por Causa de Anulación")
 
                         df_causas_anul_grp = df_csv_anul_sec1.groupby("Motivo_Norm", as_index=False).agg(
                             Líneas_Anuladas=("Pedido", "count"),
@@ -1739,7 +1755,7 @@ try:
                         df_causas_anul_disp = df_causas_anul_grp.rename(columns={
                             "Motivo_Norm": "Causa / Motivo de Anulación",
                             "Líneas_Anuladas": "Líneas Anuladas",
-                            "Pedidos_Afectados": "Pedidos Únicos",
+                            "Pedidos_Afectados": "Pedidos",
                             "Monto_Total": "Monto Anulado ($)"
                         })
 
@@ -1749,14 +1765,14 @@ try:
                             column_config={
                                 "Causa / Motivo de Anulación": st.column_config.Column("Causa / Motivo de Anulación", width="large"),
                                 "Líneas Anuladas": st.column_config.NumberColumn("Líneas Anuladas", format="%d", width="small"),
-                                "Pedidos Únicos": st.column_config.NumberColumn("Pedidos Únicos", format="%d", width="small"),
-                                "Monto Anulado ($)": st.column_config.NumberColumn("Monto Anulado ($)", format="$%.2f", width="medium")
+                                "Pedidos": st.column_config.NumberColumn("Pedidos", format="%d", width="small"),
+                                "Monto Anulado ($)": st.column_config.NumberColumn("Monto Anulado ($)", format="$%.0f", width="medium")
                             }
                         )
 
                         st.markdown("---")
-                        # 3. Top de Tiendas (Filtrado)
-                        st.markdown(f"### 🏆 Top de Tiendas con Mayor Cantidad de Líneas Anuladas ({causa_sel_anul})")
+                        # 3. Top de Tiendas
+                        st.markdown("### 🏆 Top de Tiendas con Mayor Cantidad de Líneas Anuladas")
 
                         if "Tienda" in df_csv_anul_sec1.columns:
                             tb_top_anul_csv = df_csv_anul_sec1.groupby("Tienda", as_index=False).agg(
@@ -1767,7 +1783,7 @@ try:
 
                             tb_top_anul_csv_disp = tb_top_anul_csv[["Tienda", "Líneas_Anuladas", "Pedidos_Afectados", "Monto_Total_Anulado"]].rename(columns={
                                 "Líneas_Anuladas": "Líneas Anuladas",
-                                "Pedidos_Afectados": "Pedidos Afectados",
+                                "Pedidos_Afectados": "Pedidos",
                                 "Monto_Total_Anulado": "Monto Total Anulado ($)"
                             })
 
@@ -1777,37 +1793,37 @@ try:
                                 column_config={
                                     "Tienda": st.column_config.Column("Tienda", width="medium"),
                                     "Líneas Anuladas": st.column_config.NumberColumn("Líneas Anuladas", format="%d", width="medium"),
-                                    "Pedidos Afectados": st.column_config.NumberColumn("Pedidos Afectados", format="%d", width="medium"),
-                                    "Monto Total Anulado ($)": st.column_config.NumberColumn("Monto Total Anulado ($)", format="$%.2f", width="large")
+                                    "Pedidos": st.column_config.NumberColumn("Pedidos", format="%d", width="medium"),
+                                    "Monto Total Anulado ($)": st.column_config.NumberColumn("Monto Total Anulado ($)", format="$%.0f", width="large")
                                 }
                             )
                     else:
-                        st.info("ℹ️ No hay datos para la causa de anulación seleccionada.")
+                        st.info("ℹ️ No hay datos para las causas de anulación seleccionadas.")
                 else:
                     st.info("ℹ️ No hay rectificaciones anuladas en la selección actual del portal.")
 
                 st.markdown("---")
 
                 # ==============================================================
-                # 2. SECCIÓN: CAUSAS DE APROBACIÓN Y ANÁLISIS POR ÁREA DE SALIDA
+                # 2. SECCIÓN: CAUSAS DE APROBACIÓN (APROBADAS)
                 # ==============================================================
-                st.markdown("### 📊 2. Distribución Porcentual (%) y Cantidad por Causa de Aprobación (Aprobadas)")
+                st.markdown("### 📊 Distribución Porcentual y Cantidad por Causa de Aprobación")
 
                 if not df_csv_aprob.empty:
                     causas_aprob_unicas = sorted([str(x) for x in df_csv_aprob["Motivo_Norm"].unique() if str(x).strip() != ""])
-                    opciones_causas_aprob = ["Todas las Causas"] + causas_aprob_unicas
 
-                    col_fb1, col_fb2 = st.columns([2, 2])
+                    col_fb1, col_fb2 = st.columns([2.5, 1.5])
                     with col_fb1:
-                        causa_sel_aprob = st.selectbox(
-                            "🔍 Filtrar Sección Aprobadas por Causa:",
-                            options=opciones_causas_aprob,
-                            index=0,
-                            key="sb_causa_aprob_csv"
-                        )
+                        with st.popover("🔍 Filtrar Sección Aprobadas por Causa (Selección Múltiple)", use_container_width=True):
+                            st.markdown("**Lista de Causas de Aprobación**")
+                            causa_aprob_all = st.checkbox("Seleccionar Todas las Causas de Aprobación", value=True, key="chk_all_causa_aprob")
+                            causas_sel_aprob = []
+                            for idx, c_aprob in enumerate(causas_aprob_unicas):
+                                chk_a = st.checkbox(c_aprob, value=causa_aprob_all, key=f"chk_aprob_{idx}")
+                                if chk_a:
+                                    causas_sel_aprob.append(c_aprob)
 
-                    # EL FILTRO DE CAUSA APLICA A TODOS LOS CUADROS Y TABLAS DE LA SECCIÓN DE APROBADAS
-                    df_csv_aprob_sec2 = df_csv_aprob[df_csv_aprob["Motivo_Norm"] == causa_sel_aprob].copy() if causa_sel_aprob != "Todas las Causas" else df_csv_aprob.copy()
+                    df_csv_aprob_sec2 = df_csv_aprob[df_csv_aprob["Motivo_Norm"].isin(causas_sel_aprob)].copy() if causas_sel_aprob else df_csv_aprob.iloc[0:0].copy()
 
                     if not df_csv_aprob_sec2.empty:
                         # 1. Gráfico
@@ -1827,7 +1843,7 @@ try:
                             x="Nombre_Mes",
                             y="Porcentaje",
                             color="Etiqueta_Almacen",
-                            title=f"<b>Distribución Porcentual (%) y Cantidad por Almacén - Aprobadas ({causa_sel_aprob})</b>",
+                            title="<b>Distribución Porcentual y Cantidad por Almacén - Aprobadas</b>",
                             text="Etiqueta_Texto",
                             color_discrete_map=mapa_colores_alm_g,
                             barmode="stack",
@@ -1847,8 +1863,8 @@ try:
                         st.plotly_chart(fig_apilado_aprob, use_container_width=True)
 
                         st.markdown("---")
-                        # 2. Resumen por Causa (Filtrado)
-                        st.markdown(f"#### 📋 Resumen por Causa de Aprobación ({causa_sel_aprob})")
+                        # 2. Resumen por Causa
+                        st.markdown("#### 📋 Resumen por Causa de Aprobación")
 
                         df_causas_aprob_grp = df_csv_aprob_sec2.groupby("Motivo_Norm", as_index=False).agg(
                             Líneas_Aprobadas=("Pedido", "count"),
@@ -1859,7 +1875,7 @@ try:
                         df_causas_aprob_disp = df_causas_aprob_grp.rename(columns={
                             "Motivo_Norm": "Causa / Motivo de Aprobación",
                             "Líneas_Aprobadas": "Líneas Aprobadas",
-                            "Pedidos_Afectados": "Pedidos Únicos",
+                            "Pedidos_Afectados": "Pedidos",
                             "Monto_Total": "Monto Aprobado ($)"
                         })
 
@@ -1869,14 +1885,14 @@ try:
                             column_config={
                                 "Causa / Motivo de Aprobación": st.column_config.Column("Causa / Motivo de Aprobación", width="large"),
                                 "Líneas Aprobadas": st.column_config.NumberColumn("Líneas Aprobadas", format="%d", width="small"),
-                                "Pedidos Únicos": st.column_config.NumberColumn("Pedidos Únicos", format="%d", width="small"),
-                                "Monto Aprobado ($)": st.column_config.NumberColumn("Monto Aprobado ($)", format="$%.2f", width="medium")
+                                "Pedidos": st.column_config.NumberColumn("Pedidos", format="%d", width="small"),
+                                "Monto Aprobado ($)": st.column_config.NumberColumn("Monto Aprobado ($)", format="$%.0f", width="medium")
                             }
                         )
 
-                        # 3. Distribución por Área de Salida (Filtrada)
+                        # 3. Distribución por Área de Salida
                         st.markdown("---")
-                        st.markdown(f"#### 📦 Distribución por Área de Salida en Rectificaciones Aprobadas ({causa_sel_aprob})")
+                        st.markdown("#### 📦 Distribución por Área de Salida en Rectificaciones Aprobadas")
                         
                         df_area_aprob_grp = df_csv_aprob_sec2.groupby(["Area_Salida", "Motivo_Norm"], as_index=False).agg(
                             Líneas_Aprobadas=("Pedido", "count"),
@@ -1888,7 +1904,7 @@ try:
                             "Area_Salida": "Área de Salida",
                             "Motivo_Norm": "Causa / Motivo",
                             "Líneas_Aprobadas": "Líneas Aprobadas",
-                            "Pedidos_Unicos": "Pedidos Únicos",
+                            "Pedidos_Unicos": "Pedidos",
                             "Monto_Total": "Monto Total ($)"
                         })
 
@@ -1899,14 +1915,14 @@ try:
                                 "Área de Salida": st.column_config.Column("Área de Salida", width="medium"),
                                 "Causa / Motivo": st.column_config.Column("Causa / Motivo", width="large"),
                                 "Líneas Aprobadas": st.column_config.NumberColumn("Líneas Aprobadas", format="%d", width="small"),
-                                "Pedidos Únicos": st.column_config.NumberColumn("Pedidos Únicos", format="%d", width="small"),
-                                "Monto Total ($)": st.column_config.NumberColumn("Monto Total ($)", format="$%.2f", width="medium")
+                                "Pedidos": st.column_config.NumberColumn("Pedidos", format="%d", width="small"),
+                                "Monto Total ($)": st.column_config.NumberColumn("Monto Total ($)", format="$%.0f", width="medium")
                             }
                         )
 
                         st.markdown("---")
-                        # 4. Top de Tiendas Aprobadas (Filtrado)
-                        st.markdown(f"### 🏆 Top de Tiendas con Mayor Cantidad de Líneas Aprobadas ({causa_sel_aprob})")
+                        # 4. Top de Tiendas Aprobadas
+                        st.markdown("### 🏆 Top de Tiendas con Mayor Cantidad de Líneas Aprobadas")
 
                         if "Tienda" in df_csv_aprob_sec2.columns:
                             tb_top_aprob_csv = df_csv_aprob_sec2.groupby("Tienda", as_index=False).agg(
@@ -1917,7 +1933,7 @@ try:
 
                             tb_top_aprob_csv_disp = tb_top_aprob_csv[["Tienda", "Líneas_Aprobadas", "Pedidos_Afectados", "Monto_Total_Aprobado"]].rename(columns={
                                 "Líneas_Aprobadas": "Líneas Aprobadas",
-                                "Pedidos_Afectados": "Pedidos Afectados",
+                                "Pedidos_Afectados": "Pedidos",
                                 "Monto_Total_Aprobado": "Monto Total Aprobado ($)"
                             })
 
@@ -1927,12 +1943,12 @@ try:
                                 column_config={
                                     "Tienda": st.column_config.Column("Tienda", width="medium"),
                                     "Líneas Aprobadas": st.column_config.NumberColumn("Líneas Aprobadas", format="%d", width="medium"),
-                                    "Pedidos Afectados": st.column_config.NumberColumn("Pedidos Afectados", format="%d", width="medium"),
-                                    "Monto Total Aprobado ($)": st.column_config.NumberColumn("Monto Total Aprobado ($)", format="$%.2f", width="large")
+                                    "Pedidos": st.column_config.NumberColumn("Pedidos", format="%d", width="medium"),
+                                    "Monto Total Aprobado ($)": st.column_config.NumberColumn("Monto Total Aprobado ($)", format="$%.0f", width="large")
                                 }
                             )
                     else:
-                        st.info("ℹ️ No hay datos para la causa de aprobación seleccionada.")
+                        st.info("ℹ️ No hay datos para las causas de aprobación seleccionadas.")
                 else:
                     st.info("ℹ️ No hay rectificaciones aprobadas registradas en el archivo del portal.")
 
@@ -1941,20 +1957,30 @@ try:
                 # ==============================================================
                 # 3. SECCIÓN: DETALLE INDIVIDUAL DE RECTIFICACIONES REGISTRADAS
                 # ==============================================================
-                st.markdown("### 🔎 3. Detalle Individual de Reclamos del Portal")
+                st.markdown("### 🔎 Detalle Individual de Reclamos del Portal")
 
-                tiendas_portal_opt = ["Todas las Tiendas"] + sorted([str(x) for x in df_portal_csv["Tienda"].dropna().unique() if str(x) != "nan"]) if "Tienda" in df_portal_csv.columns else ["Todas las Tiendas"]
+                tiendas_portal_opt = sorted([str(x) for x in df_portal_csv["Tienda"].dropna().unique() if str(x) != "nan"]) if "Tienda" in df_portal_csv.columns else []
                 
-                col_tp1, col_tp2 = st.columns([2, 2])
+                col_tp1, col_tp2 = st.columns([2.5, 1.5])
                 with col_tp1:
-                    t_portal_sel = st.selectbox("Filtrar por Tienda:", tiendas_portal_opt, index=0, key="sb_tienda_portal")
+                    with st.popover("🏪 Filtrar por Tienda(s) del Portal (Selección Múltiple)", use_container_width=True):
+                        st.markdown("**Lista de Tiendas**")
+                        t_portal_all = st.checkbox("Seleccionar Todas las Tiendas", value=True, key="chk_all_tiendas_portal_h6")
+                        t_portal_sel = []
+                        for idx_t, t_code in enumerate(tiendas_portal_opt):
+                            chk_t = st.checkbox(f"Tienda {t_code}", value=t_portal_all, key=f"chk_t_portal_{idx_t}")
+                            if chk_t:
+                                t_portal_sel.append(t_code)
+
                 with col_tp2:
                     busqueda_ped_portal = st.text_input("🔍 Filtrar por Número de Pedido:", "", key="txt_ped_portal")
 
                 df_portal_view = df_portal_csv.copy()
 
-                if t_portal_sel != "Todas las Tiendas" and "Tienda" in df_portal_view.columns:
-                    df_portal_view = df_portal_view[df_portal_view["Tienda"].astype(str) == str(t_portal_sel)]
+                if t_portal_sel and "Tienda" in df_portal_view.columns:
+                    df_portal_view = df_portal_view[df_portal_view["Tienda"].astype(str).isin(t_portal_sel)]
+                else:
+                    df_portal_view = df_portal_view.iloc[0:0].copy()
 
                 if busqueda_ped_portal.strip() and "Pedido" in df_portal_view.columns:
                     df_portal_view = df_portal_view[df_portal_view["Pedido"].astype(str).str.contains(busqueda_ped_portal.strip(), case=False, na=False)]
@@ -1991,7 +2017,7 @@ try:
                         "Fecha": st.column_config.Column("Fecha", width="small"),
                         "Tipo (Falta/Sobra)": st.column_config.Column("Tipo", width="small"),
                         "Cnt. Blt.": st.column_config.NumberColumn("Cnt. Blt.", format="%.2f", width="small"),
-                        "Monto ($)": st.column_config.NumberColumn("Monto ($)", format="$%.2f", width="medium"),
+                        "Monto ($)": st.column_config.NumberColumn("Monto ($)", format="$%.0f", width="medium"),
                         "Fch. Modif.": st.column_config.Column("Fch. Modif.", width="medium"),
                         "Estado Portal": st.column_config.Column("Estado Portal", width="small"),
                         "Motivo / Causa": st.column_config.Column("Motivo / Causa", width="large"),
