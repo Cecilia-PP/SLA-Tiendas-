@@ -163,52 +163,99 @@ def cargar_datos_sla():
     return pd.DataFrame(), pd.DataFrame()
 
 @st.cache_data
-def cargar_datos_anulaciones():
+def cargar_datos_anulaciones(df_sla=None, df_rect=None):
+    df_a = pd.DataFrame()
     if os.path.exists("Tablero_Anulaciones_Detalle.parquet"):
-        return pd.read_parquet("Tablero_Anulaciones_Detalle.parquet")
-    
-    archivos = [f for f in os.listdir(".") if ("anula" in f.lower() or "causa" in f.lower()) and f.endswith(".csv")]
-    if not archivos and os.path.exists("Datos_mensuales"):
-        archivos = [os.path.join("Datos_mensuales", f) for f in os.listdir("Datos_mensuales") if ("anula" in f.lower() or "causa" in f.lower()) and f.endswith(".csv")]
-    
-    if archivos:
-        try:
-            df_a = pd.read_csv(archivos[0], sep=None, engine="python", encoding="latin1", dtype=str, on_bad_lines="skip")
-            df_a.columns = df_a.columns.str.strip()
-            
-            mapa = {}
-            for c in df_a.columns:
-                clow = c.lower()
-                if "almac" in clow: mapa[c] = "Almacen"
-                elif "tienda" in clow or "sucursal" in clow: mapa[c] = "Tienda"
-                elif "pedido" in clow: mapa[c] = "Pedido"
-                elif "nota" in clow or "nro" in clow: mapa[c] = "Nota_Nro"
-                elif "fch. modif" in clow or "fch_modif" in clow or "fecha modif" in clow: mapa[c] = "Fecha_Modif"
-                elif "fech" in clow and "modif" not in clow: mapa[c] = "Fecha"
-                elif "tipo" in clow or "motivo_rect" in clow: mapa[c] = "Tipo"
-                elif "cnt" in clow or "blt" in clow or "bulto" in clow or "cant" in clow: mapa[c] = "Cant_Blt"
-                elif "imp" in clow or "monto" in clow or "importe" in clow: mapa[c] = "Monto"
-                elif "estado rp" in clow: mapa[c] = "Estado_RP"
-                elif "estado" in clow: mapa[c] = "Estado"
-                elif "motivo" in clow or "causa" in clow: mapa[c] = "Causa_Anulacion"
-                elif "lote" in clow or "rpa" in clow: mapa[c] = "Lote_RPA"
+        df_a = pd.read_parquet("Tablero_Anulaciones_Detalle.parquet")
+    else:
+        archivos = [f for f in os.listdir(".") if ("anula" in f.lower() or "causa" in f.lower()) and f.endswith(".csv")]
+        if not archivos and os.path.exists("Datos_mensuales"):
+            archivos = [os.path.join("Datos_mensuales", f) for f in os.listdir("Datos_mensuales") if ("anula" in f.lower() or "causa" in f.lower()) and f.endswith(".csv")]
+        
+        if archivos:
+            try:
+                df_a = pd.read_csv(archivos[0], sep=None, engine="python", encoding="latin1", dtype=str, on_bad_lines="skip")
+                df_a.columns = df_a.columns.str.strip()
+                
+                mapa = {}
+                for c in df_a.columns:
+                    clow = c.lower()
+                    if "almac" in clow: mapa[c] = "Almacen"
+                    elif "tienda" in clow or "sucursal" in clow: mapa[c] = "Tienda"
+                    elif "pedido" in clow: mapa[c] = "Pedido"
+                    elif "nota" in clow or "nro" in clow: mapa[c] = "Nota_Nro"
+                    elif "fch. modif" in clow or "fch_modif" in clow or "fecha modif" in clow: mapa[c] = "Fecha_Modif"
+                    elif "fech" in clow and "modif" not in clow: mapa[c] = "Fecha"
+                    elif "tipo" in clow or "motivo_rect" in clow: mapa[c] = "Tipo"
+                    elif "cnt" in clow or "blt" in clow or "bulto" in clow or "cant" in clow: mapa[c] = "Cant_Blt"
+                    elif "imp" in clow or "monto" in clow or "importe" in clow: mapa[c] = "Monto"
+                    elif "estado rp" in clow: mapa[c] = "Estado_RP"
+                    elif "estado" in clow: mapa[c] = "Estado"
+                    elif "motivo" in clow or "causa" in clow: mapa[c] = "Causa_Anulacion"
+                    elif "lote" in clow or "rpa" in clow: mapa[c] = "Lote_RPA"
 
-            df_a = df_a.rename(columns=mapa)
-            if "Pedido" in df_a.columns: df_a["Pedido"] = df_a["Pedido"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0")
-            if "Tienda" in df_a.columns: df_a["Tienda"] = df_a["Tienda"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0")
-            if "Almacen" in df_a.columns: df_a["Almacen"] = df_a["Almacen"].astype(str).str.strip()
-            if "Monto" in df_a.columns: df_a["Monto"] = pd.to_numeric(df_a["Monto"].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
-            if "Cant_Blt" in df_a.columns: df_a["Cant_Blt"] = pd.to_numeric(df_a["Cant_Blt"].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
-            
-            return df_a
-        except Exception as e:
-            print(f"Error cargando respaldo anulaciones: {e}")
-            
-    return pd.DataFrame()
+                df_a = df_a.rename(columns=mapa)
+                if "Pedido" in df_a.columns: df_a["Pedido"] = df_a["Pedido"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0")
+                if "Tienda" in df_a.columns: df_a["Tienda"] = df_a["Tienda"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0")
+                if "Almacen" in df_a.columns: df_a["Almacen"] = df_a["Almacen"].astype(str).str.strip()
+                if "Monto" in df_a.columns: df_a["Monto"] = pd.to_numeric(df_a["Monto"].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
+                if "Cant_Blt" in df_a.columns: df_a["Cant_Blt"] = pd.to_numeric(df_a["Cant_Blt"].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
+            except Exception as e:
+                print(f"Error cargando respaldo anulaciones: {e}")
+
+    # ⚡ BUSCAR MAPEO DE ÁREA DIRECTAMENTE EN LOS CSVs DE ÁREA Y RESPALDOS
+    if not df_a.empty and "Pedido" in df_a.columns:
+        mapa_area = {}
+
+        # 1. Cargar diccionario de los CSVs de Área de Salida disponibles
+        import glob
+        archivos_area = glob.glob("*[Aa]rea*[Ss]alida*.csv") + glob.glob(os.path.join("Datos_mensuales", "*[Aa]rea*[Ss]alida*.csv"))
+        
+        for fa in set(archivos_area):
+            try:
+                df_area_temp = pd.read_csv(fa, sep=None, engine="python", encoding="latin1", dtype=str, on_bad_lines="skip")
+                df_area_temp.columns = df_area_temp.columns.str.strip().str.upper()
+                
+                cols_p = [c for c in df_area_temp.columns if any(k in c for k in ["PEDIDO", "Nº DE PEDIDO", "Nº PEDIDO", "NRO_PEDIDO"])]
+                cols_a = [c for c in df_area_temp.columns if any(k in c for k in ["AREA", "ÁREA", "SALIDA", "DESCRIPCION", "SECTOR"])]
+                cols_t = [c for c in df_area_temp.columns if any(k in c for k in ["TIENDA", "SUCURSAL", "COD_SUC_DES"])]
+
+                if cols_p and cols_a:
+                    col_p, col_a = cols_p[0], cols_a[0]
+                    df_area_temp["Ped_Clean"] = df_area_temp[col_p].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0")
+                    df_area_temp["Area_Clean"] = df_area_temp[col_a].astype(str).str.strip()
+                    
+                    df_val = df_area_temp[(df_area_temp["Ped_Clean"] != "") & (~df_area_temp["Area_Clean"].isin(["", "nan", "None", "0"]))]
+                    if not df_val.empty:
+                        mapa_area.update(df_val.set_index("Ped_Clean")["Area_Clean"].to_dict())
+            except Exception as e:
+                print(f"Error procesando CSV de área {fa}: {e}")
+
+        # 2. Respaldos desde df_sla y df_rect
+        if df_sla is not None and not df_sla.empty and "Pedido" in df_sla.columns and "Area_Salida" in df_sla.columns:
+            for k, v in df_sla.set_index("Pedido")["Area_Salida"].to_dict().items():
+                if k not in mapa_area or mapa_area[k] == "Sin Clasificar":
+                    mapa_area[k] = v
+
+        if df_rect is not None and not df_rect.empty and "Pedido" in df_rect.columns and "Area_Salida" in df_rect.columns:
+            df_r_valid = df_rect[df_rect["Area_Salida"] != "Sin Clasificar"]
+            if not df_r_valid.empty:
+                for k, v in df_r_valid.set_index("Pedido")["Area_Salida"].to_dict().items():
+                    if k not in mapa_area or mapa_area[k] == "Sin Clasificar":
+                        mapa_area[k] = v
+
+        if mapa_area:
+            df_a["Area_Salida"] = df_a["Pedido"].map(mapa_area).fillna("Sin Clasificar")
+        elif "Area_Salida" not in df_a.columns:
+            df_a["Area_Salida"] = "Sin Clasificar"
+
+        df_a["Area_Salida"] = df_a["Area_Salida"].replace(["", "nan", "None", "-"], "Sin Clasificar")
+
+    return df_a
 
 try:
     df_sla, df_rect = cargar_datos_sla()
-    df_anul = cargar_datos_anulaciones()
+    df_anul = cargar_datos_anulaciones(df_sla, df_rect)
 
     if not df_sla.empty:
         st.sidebar.header("🔍 Filtros de Búsqueda")
@@ -1526,10 +1573,24 @@ try:
         # HOJA 6: ANÁLISIS DE RECTIFICACIONES DE PORTAL
         with tab6:
             st.subheader("❌ Rectificaciones del Portal: Análisis de Causas Anuladas y Aprobadas")
-            st.markdown("Auditoría independiente fuera del cálculo del SLA basada **exclusivamente en la extracción del portal de rectificaciones**. Esta vista procesa la totalidad de reclamos (**Anuladas** y **Aprobadas**), analizando sus motivos registrados y su distribución porcentual por Almacén y Mes.")
+            st.markdown("Auditoría independiente fuera del cálculo del SLA basada **exclusivamente en la extracción del portal de rectificaciones**. Esta vista procesa la totalidad de reclamos (**Anuladas** y **Aprobadas**), analizando sus motivos registrados y su distribución porcentual por Almacén, Área de Salida y Mes.")
 
             if not df_anul.empty:
                 df_portal_csv = df_anul.copy()
+
+                # Cruzar área de salida por Pedido de respaldo si no viniera definida
+                if "Area_Salida" not in df_portal_csv.columns or df_portal_csv["Area_Salida"].isna().all():
+                    mapa_a = {}
+                    if not df_sla.empty and "Pedido" in df_sla.columns and "Area_Salida" in df_sla.columns:
+                        mapa_a.update(df_sla.set_index("Pedido")["Area_Salida"].to_dict())
+                    if not df_rect.empty and "Pedido" in df_rect.columns and "Area_Salida" in df_rect.columns:
+                        df_r_v = df_rect[df_rect["Area_Salida"] != "Sin Clasificar"]
+                        if not df_r_v.empty:
+                            mapa_a.update(df_r_v.set_index("Pedido")["Area_Salida"].to_dict())
+                    df_portal_csv["Area_Salida"] = df_portal_csv["Pedido"].map(mapa_a).fillna("Sin Clasificar")
+
+                df_portal_csv["Area_Salida"] = df_portal_csv["Area_Salida"].fillna("Sin Clasificar").astype(str).str.strip()
+                df_portal_csv["Area_Salida"] = df_portal_csv["Area_Salida"].replace(["", "nan", "None", "-"], "Sin Clasificar")
 
                 # Normalización de mes
                 if "Fecha" in df_portal_csv.columns:
@@ -1585,17 +1646,14 @@ try:
                 df_csv_anul = df_portal_csv[df_portal_csv["Estado_Clean"].str.contains("Anulada|Rechazada|R", case=False, na=False)].copy()
                 df_csv_aprob = df_portal_csv[df_portal_csv["Estado_Clean"].str.contains("Aprobada|Confirmada|M", case=False, na=False)].copy()
 
-                # Si no hay match explícito, poner todas en Anuladas para no perder datos
                 if df_csv_anul.empty and df_csv_aprob.empty:
                     df_csv_anul = df_portal_csv.copy()
 
                 tot_lin_anul_csv = len(df_csv_anul)
                 tot_monto_anul_csv = df_csv_anul["Monto_Signed"].sum() if not df_csv_anul.empty else 0.0
-                tot_ped_anul_csv = df_csv_anul["Pedido"].nunique() if not df_csv_anul.empty and "Pedido" in df_csv_anul.columns else 0
 
                 tot_lin_aprob_csv = len(df_csv_aprob)
                 tot_monto_aprob_csv = df_csv_aprob["Monto_Signed"].sum() if not df_csv_aprob.empty else 0.0
-                tot_ped_aprob_csv = df_csv_aprob["Pedido"].nunique() if not df_csv_aprob.empty and "Pedido" in df_csv_aprob.columns else 0
 
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("❌ Líneas Anuladas / Rechazadas", f"{tot_lin_anul_csv:,}")
@@ -1727,7 +1785,7 @@ try:
                 st.markdown("---")
 
                 # ==============================================================
-                # 2. SECCIÓN: CAUSAS DE APROBACIÓN (APROBADAS / CONFIRMADAS)
+                # 2. SECCIÓN: CAUSAS DE APROBACIÓN Y ANÁLISIS POR ÁREA DE SALIDA
                 # ==============================================================
                 st.markdown("### 📊 2. Distribución Porcentual (%) y Cantidad por Causa de Aprobación (Aprobadas)")
 
@@ -1811,6 +1869,36 @@ try:
                         }
                     )
 
+                    # 📌 NUEVO CUADRO: DISTRIBUCIÓN POR ÁREA DE SALIDA DE RECTIFICACIONES APROBADAS
+                    st.markdown("---")
+                    st.markdown("#### 📦 Distribución por Área de Salida en Rectificaciones Aprobadas")
+                    
+                    df_area_aprob_grp = df_csv_aprob.groupby(["Area_Salida", "Motivo_Norm"], as_index=False).agg(
+                        Líneas_Aprobadas=("Pedido", "count"),
+                        Pedidos_Unicos=("Pedido", "nunique"),
+                        Monto_Total=("Monto_Signed", "sum")
+                    ).sort_values(by=["Líneas_Aprobadas"], ascending=False).reset_index(drop=True)
+
+                    df_area_aprob_disp = df_area_aprob_grp.rename(columns={
+                        "Area_Salida": "Área de Salida",
+                        "Motivo_Norm": "Causa / Motivo",
+                        "Líneas_Aprobadas": "Líneas Aprobadas",
+                        "Pedidos_Unicos": "Pedidos Únicos",
+                        "Monto_Total": "Monto Total ($)"
+                    })
+
+                    st.dataframe(
+                        df_area_aprob_disp,
+                        hide_index=True,
+                        column_config={
+                            "Área de Salida": st.column_config.Column("Área de Salida", width="medium"),
+                            "Causa / Motivo": st.column_config.Column("Causa / Motivo", width="large"),
+                            "Líneas Aprobadas": st.column_config.NumberColumn("Líneas Aprobadas", format="%d", width="small"),
+                            "Pedidos Únicos": st.column_config.NumberColumn("Pedidos Únicos", format="%d", width="small"),
+                            "Monto Total ($)": st.column_config.NumberColumn("Monto Total ($)", format="$%.2f", width="medium")
+                        }
+                    )
+
                     st.markdown("---")
                     st.markdown("### 🏆 Top de Tiendas con Mayor Cantidad de Líneas Aprobadas")
 
@@ -1863,13 +1951,14 @@ try:
                 if busqueda_ped_portal.strip() and "Pedido" in df_portal_view.columns:
                     df_portal_view = df_portal_view[df_portal_view["Pedido"].astype(str).str.contains(busqueda_ped_portal.strip(), case=False, na=False)]
 
-                cols_portal_disp = ["Almacen", "Tienda", "Pedido", "Nota_Nro", "Fecha", "Tipo", "Cant_Blt", "Monto_Signed", "Fecha_Modif", "Estado_Clean", "Motivo_Norm", "Estado_RP", "Lote_RPA"]
+                cols_portal_disp = ["Almacen", "Tienda", "Pedido", "Area_Salida", "Nota_Nro", "Fecha", "Tipo", "Cant_Blt", "Monto_Signed", "Fecha_Modif", "Estado_Clean", "Motivo_Norm", "Estado_RP", "Lote_RPA"]
                 cols_portal_exist = [c for c in cols_portal_disp if c in df_portal_view.columns]
 
                 df_portal_clean = df_portal_view[cols_portal_exist].rename(columns={
                     "Almacen": "Almacén",
                     "Tienda": "Tienda",
                     "Pedido": "Pedido",
+                    "Area_Salida": "Área de Salida",
                     "Nota_Nro": "Nota Nro",
                     "Fecha": "Fecha",
                     "Tipo": "Tipo (Falta/Sobra)",
@@ -1889,6 +1978,7 @@ try:
                         "Almacén": st.column_config.Column("Almacén", width="small"),
                         "Tienda": st.column_config.Column("Tienda", width="small"),
                         "Pedido": st.column_config.Column("Pedido", width="medium"),
+                        "Área de Salida": st.column_config.Column("Área de Salida", width="medium"),
                         "Nota Nro": st.column_config.Column("Nota Nro", width="small"),
                         "Fecha": st.column_config.Column("Fecha", width="small"),
                         "Tipo (Falta/Sobra)": st.column_config.Column("Tipo", width="small"),
