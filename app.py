@@ -1573,7 +1573,7 @@ try:
         # HOJA 6: ANÁLISIS DE RECTIFICACIONES DE PORTAL
         with tab6:
             st.subheader("❌ Rectificaciones del Portal: Análisis de Causas Anuladas y Aprobadas")
-            st.markdown("Auditoría independiente fuera del cálculo del SLA basada **exclusivamente en la extracción del portal de rectificaciones**. Esta vista procesa la totalidad de reclamos (**Anuladas** y **Aprobadas**), analizando sus motivos registrados y su distribución porcentual por Almacén, Área de Salida y Mes.")
+            st.markdown("Auditoría independiente fuera del cálculo del SLA basada **exclusivamente en la extracción del portal de rectificaciones**. Esta vista procesa la totalidad de reclamos (**Anuladas** y **Aprobadas**), analizando sus motivos registrados y su distribución por Almacén, Área de Salida, Tienda y Mes.")
 
             if not df_anul.empty:
                 df_portal_csv = df_anul.copy()
@@ -1618,9 +1618,9 @@ try:
 
                 df_portal_csv["Etiqueta_Almacen"] = "Almacén " + df_portal_csv["Almacen"].astype(str)
 
-                # FILTRO DE ALMACÉN PARA LA HOJA 6
+                # FILTRO GLOBAL DE ALMACÉN PARA LA HOJA 6
                 almacenes_portal_opt = ["Todos los Almacenes"] + sorted([str(x) for x in df_portal_csv["Almacen"].dropna().unique() if str(x) != "nan"])
-                alm_portal_sel = st.selectbox("🏭 Filtrar por Almacén / CD:", almacenes_portal_opt, index=0, key="sb_alm_portal_h6")
+                alm_portal_sel = st.selectbox("🏭 Filtrar Hoja por Almacén / CD:", almacenes_portal_opt, index=0, key="sb_alm_portal_h6")
 
                 if alm_portal_sel != "Todos los Almacenes":
                     df_portal_csv = df_portal_csv[df_portal_csv["Almacen"].astype(str) == str(alm_portal_sel)].copy()
@@ -1675,16 +1675,18 @@ try:
                     col_fa1, col_fa2 = st.columns([2, 2])
                     with col_fa1:
                         causa_sel_anul = st.selectbox(
-                            "🔍 Seleccionar Causa de Anulación (Aplica ÚNICAMENTE al Gráfico de Anuladas):",
+                            "🔍 Filtrar Sección Anuladas por Causa:",
                             options=opciones_causas_anul,
                             index=0,
                             key="sb_causa_anul_csv"
                         )
 
-                    df_csv_anul_filt = df_csv_anul[df_csv_anul["Motivo_Norm"] == causa_sel_anul].copy() if causa_sel_anul != "Todas las Causas" else df_csv_anul.copy()
+                    # EL FILTRO DE CAUSA APLICA A TODOS LOS CUADROS Y TABLAS DE LA SECCIÓN DE ANULADAS
+                    df_csv_anul_sec1 = df_csv_anul[df_csv_anul["Motivo_Norm"] == causa_sel_anul].copy() if causa_sel_anul != "Todas las Causas" else df_csv_anul.copy()
 
-                    if not df_csv_anul_filt.empty:
-                        grp_anul = df_csv_anul_filt.groupby(["Mes_Num", "Nombre_Mes", "Etiqueta_Almacen"], as_index=False).agg(
+                    if not df_csv_anul_sec1.empty:
+                        # 1. Gráfico
+                        grp_anul = df_csv_anul_sec1.groupby(["Mes_Num", "Nombre_Mes", "Etiqueta_Almacen"], as_index=False).agg(
                             Cant_Lineas=("Pedido", "count")
                         )
 
@@ -1723,62 +1725,64 @@ try:
                         )
 
                         st.plotly_chart(fig_apilado_anul, use_container_width=True)
-                    else:
-                        st.info("ℹ️ No hay datos para la causa de anulación seleccionada en el gráfico.")
 
-                    st.markdown("---")
-                    st.markdown("#### 📋 Resumen por Causa de Anulación (Consolidado General Anuladas)")
+                        st.markdown("---")
+                        # 2. Resumen por Causa (Filtrado)
+                        st.markdown(f"#### 📋 Resumen por Causa de Anulación ({causa_sel_anul})")
 
-                    df_causas_anul_grp = df_csv_anul.groupby("Motivo_Norm", as_index=False).agg(
-                        Líneas_Anuladas=("Pedido", "count"),
-                        Pedidos_Afectados=("Pedido", "nunique"),
-                        Monto_Total=("Monto_Signed", "sum")
-                    ).sort_values(by="Líneas_Anuladas", ascending=False).reset_index(drop=True)
-
-                    df_causas_anul_disp = df_causas_anul_grp.rename(columns={
-                        "Motivo_Norm": "Causa / Motivo de Anulación",
-                        "Líneas_Anuladas": "Líneas Anuladas",
-                        "Pedidos_Afectados": "Pedidos Únicos",
-                        "Monto_Total": "Monto Anulado ($)"
-                    })
-
-                    st.dataframe(
-                        df_causas_anul_disp,
-                        hide_index=True,
-                        column_config={
-                            "Causa / Motivo de Anulación": st.column_config.Column("Causa / Motivo de Anulación", width="large"),
-                            "Líneas Anuladas": st.column_config.NumberColumn("Líneas Anuladas", format="%d", width="small"),
-                            "Pedidos Únicos": st.column_config.NumberColumn("Pedidos Únicos", format="%d", width="small"),
-                            "Monto Anulado ($)": st.column_config.NumberColumn("Monto Anulado ($)", format="$%.2f", width="medium")
-                        }
-                    )
-
-                    st.markdown("---")
-                    st.markdown("### 🏆 Top de Tiendas con Mayor Cantidad de Líneas Anuladas")
-
-                    if "Tienda" in df_csv_anul.columns:
-                        tb_top_anul_csv = df_csv_anul.groupby("Tienda", as_index=False).agg(
+                        df_causas_anul_grp = df_csv_anul_sec1.groupby("Motivo_Norm", as_index=False).agg(
                             Líneas_Anuladas=("Pedido", "count"),
                             Pedidos_Afectados=("Pedido", "nunique"),
-                            Monto_Total_Anulado=("Monto_Signed", "sum")
-                        ).sort_values(by="Líneas_Anuladas", ascending=False).head(15).reset_index(drop=True)
+                            Monto_Total=("Monto_Signed", "sum")
+                        ).sort_values(by="Líneas_Anuladas", ascending=False).reset_index(drop=True)
 
-                        tb_top_anul_csv_disp = tb_top_anul_csv[["Tienda", "Líneas_Anuladas", "Pedidos_Afectados", "Monto_Total_Anulado"]].rename(columns={
+                        df_causas_anul_disp = df_causas_anul_grp.rename(columns={
+                            "Motivo_Norm": "Causa / Motivo de Anulación",
                             "Líneas_Anuladas": "Líneas Anuladas",
-                            "Pedidos_Afectados": "Pedidos Afectados",
-                            "Monto_Total_Anulado": "Monto Total Anulado ($)"
+                            "Pedidos_Afectados": "Pedidos Únicos",
+                            "Monto_Total": "Monto Anulado ($)"
                         })
 
                         st.dataframe(
-                            tb_top_anul_csv_disp,
+                            df_causas_anul_disp,
                             hide_index=True,
                             column_config={
-                                "Tienda": st.column_config.Column("Tienda", width="medium"),
-                                "Líneas Anuladas": st.column_config.NumberColumn("Líneas Anuladas", format="%d", width="medium"),
-                                "Pedidos Afectados": st.column_config.NumberColumn("Pedidos Afectados", format="%d", width="medium"),
-                                "Monto Total Anulado ($)": st.column_config.NumberColumn("Monto Total Anulado ($)", format="$%.2f", width="large")
+                                "Causa / Motivo de Anulación": st.column_config.Column("Causa / Motivo de Anulación", width="large"),
+                                "Líneas Anuladas": st.column_config.NumberColumn("Líneas Anuladas", format="%d", width="small"),
+                                "Pedidos Únicos": st.column_config.NumberColumn("Pedidos Únicos", format="%d", width="small"),
+                                "Monto Anulado ($)": st.column_config.NumberColumn("Monto Anulado ($)", format="$%.2f", width="medium")
                             }
                         )
+
+                        st.markdown("---")
+                        # 3. Top de Tiendas (Filtrado)
+                        st.markdown(f"### 🏆 Top de Tiendas con Mayor Cantidad de Líneas Anuladas ({causa_sel_anul})")
+
+                        if "Tienda" in df_csv_anul_sec1.columns:
+                            tb_top_anul_csv = df_csv_anul_sec1.groupby("Tienda", as_index=False).agg(
+                                Líneas_Anuladas=("Pedido", "count"),
+                                Pedidos_Afectados=("Pedido", "nunique"),
+                                Monto_Total_Anulado=("Monto_Signed", "sum")
+                            ).sort_values(by="Líneas_Anuladas", ascending=False).head(15).reset_index(drop=True)
+
+                            tb_top_anul_csv_disp = tb_top_anul_csv[["Tienda", "Líneas_Anuladas", "Pedidos_Afectados", "Monto_Total_Anulado"]].rename(columns={
+                                "Líneas_Anuladas": "Líneas Anuladas",
+                                "Pedidos_Afectados": "Pedidos Afectados",
+                                "Monto_Total_Anulado": "Monto Total Anulado ($)"
+                            })
+
+                            st.dataframe(
+                                tb_top_anul_csv_disp,
+                                hide_index=True,
+                                column_config={
+                                    "Tienda": st.column_config.Column("Tienda", width="medium"),
+                                    "Líneas Anuladas": st.column_config.NumberColumn("Líneas Anuladas", format="%d", width="medium"),
+                                    "Pedidos Afectados": st.column_config.NumberColumn("Pedidos Afectados", format="%d", width="medium"),
+                                    "Monto Total Anulado ($)": st.column_config.NumberColumn("Monto Total Anulado ($)", format="$%.2f", width="large")
+                                }
+                            )
+                    else:
+                        st.info("ℹ️ No hay datos para la causa de anulación seleccionada.")
                 else:
                     st.info("ℹ️ No hay rectificaciones anuladas en la selección actual del portal.")
 
@@ -1796,16 +1800,18 @@ try:
                     col_fb1, col_fb2 = st.columns([2, 2])
                     with col_fb1:
                         causa_sel_aprob = st.selectbox(
-                            "🔍 Seleccionar Causa de Aprobación (Aplica ÚNICAMENTE al Gráfico de Aprobadas):",
+                            "🔍 Filtrar Sección Aprobadas por Causa:",
                             options=opciones_causas_aprob,
                             index=0,
                             key="sb_causa_aprob_csv"
                         )
 
-                    df_csv_aprob_filt = df_csv_aprob[df_csv_aprob["Motivo_Norm"] == causa_sel_aprob].copy() if causa_sel_aprob != "Todas las Causas" else df_csv_aprob.copy()
+                    # EL FILTRO DE CAUSA APLICA A TODOS LOS CUADROS Y TABLAS DE LA SECCIÓN DE APROBADAS
+                    df_csv_aprob_sec2 = df_csv_aprob[df_csv_aprob["Motivo_Norm"] == causa_sel_aprob].copy() if causa_sel_aprob != "Todas las Causas" else df_csv_aprob.copy()
 
-                    if not df_csv_aprob_filt.empty:
-                        grp_aprob = df_csv_aprob_filt.groupby(["Mes_Num", "Nombre_Mes", "Etiqueta_Almacen"], as_index=False).agg(
+                    if not df_csv_aprob_sec2.empty:
+                        # 1. Gráfico
+                        grp_aprob = df_csv_aprob_sec2.groupby(["Mes_Num", "Nombre_Mes", "Etiqueta_Almacen"], as_index=False).agg(
                             Cant_Lineas=("Pedido", "count")
                         )
 
@@ -1839,92 +1845,94 @@ try:
                         )
 
                         st.plotly_chart(fig_apilado_aprob, use_container_width=True)
-                    else:
-                        st.info("ℹ️ No hay datos para la causa de aprobación seleccionada en el gráfico.")
 
-                    st.markdown("---")
-                    st.markdown("#### 📋 Resumen por Causa de Aprobación (Consolidado General Aprobadas)")
+                        st.markdown("---")
+                        # 2. Resumen por Causa (Filtrado)
+                        st.markdown(f"#### 📋 Resumen por Causa de Aprobación ({causa_sel_aprob})")
 
-                    df_causas_aprob_grp = df_csv_aprob.groupby("Motivo_Norm", as_index=False).agg(
-                        Líneas_Aprobadas=("Pedido", "count"),
-                        Pedidos_Afectados=("Pedido", "nunique"),
-                        Monto_Total=("Monto_Signed", "sum")
-                    ).sort_values(by="Líneas_Aprobadas", ascending=False).reset_index(drop=True)
-
-                    df_causas_aprob_disp = df_causas_aprob_grp.rename(columns={
-                        "Motivo_Norm": "Causa / Motivo de Aprobación",
-                        "Líneas_Aprobadas": "Líneas Aprobadas",
-                        "Pedidos_Afectados": "Pedidos Únicos",
-                        "Monto_Total": "Monto Aprobado ($)"
-                    })
-
-                    st.dataframe(
-                        df_causas_aprob_disp,
-                        hide_index=True,
-                        column_config={
-                            "Causa / Motivo de Aprobación": st.column_config.Column("Causa / Motivo de Aprobación", width="large"),
-                            "Líneas Aprobadas": st.column_config.NumberColumn("Líneas Aprobadas", format="%d", width="small"),
-                            "Pedidos Únicos": st.column_config.NumberColumn("Pedidos Únicos", format="%d", width="small"),
-                            "Monto Aprobado ($)": st.column_config.NumberColumn("Monto Aprobado ($)", format="$%.2f", width="medium")
-                        }
-                    )
-
-                    # 📌 NUEVO CUADRO: DISTRIBUCIÓN POR ÁREA DE SALIDA DE RECTIFICACIONES APROBADAS
-                    st.markdown("---")
-                    st.markdown("#### 📦 Distribución por Área de Salida en Rectificaciones Aprobadas")
-                    
-                    df_area_aprob_grp = df_csv_aprob.groupby(["Area_Salida", "Motivo_Norm"], as_index=False).agg(
-                        Líneas_Aprobadas=("Pedido", "count"),
-                        Pedidos_Unicos=("Pedido", "nunique"),
-                        Monto_Total=("Monto_Signed", "sum")
-                    ).sort_values(by=["Líneas_Aprobadas"], ascending=False).reset_index(drop=True)
-
-                    df_area_aprob_disp = df_area_aprob_grp.rename(columns={
-                        "Area_Salida": "Área de Salida",
-                        "Motivo_Norm": "Causa / Motivo",
-                        "Líneas_Aprobadas": "Líneas Aprobadas",
-                        "Pedidos_Unicos": "Pedidos Únicos",
-                        "Monto_Total": "Monto Total ($)"
-                    })
-
-                    st.dataframe(
-                        df_area_aprob_disp,
-                        hide_index=True,
-                        column_config={
-                            "Área de Salida": st.column_config.Column("Área de Salida", width="medium"),
-                            "Causa / Motivo": st.column_config.Column("Causa / Motivo", width="large"),
-                            "Líneas Aprobadas": st.column_config.NumberColumn("Líneas Aprobadas", format="%d", width="small"),
-                            "Pedidos Únicos": st.column_config.NumberColumn("Pedidos Únicos", format="%d", width="small"),
-                            "Monto Total ($)": st.column_config.NumberColumn("Monto Total ($)", format="$%.2f", width="medium")
-                        }
-                    )
-
-                    st.markdown("---")
-                    st.markdown("### 🏆 Top de Tiendas con Mayor Cantidad de Líneas Aprobadas")
-
-                    if "Tienda" in df_csv_aprob.columns:
-                        tb_top_aprob_csv = df_csv_aprob.groupby("Tienda", as_index=False).agg(
+                        df_causas_aprob_grp = df_csv_aprob_sec2.groupby("Motivo_Norm", as_index=False).agg(
                             Líneas_Aprobadas=("Pedido", "count"),
                             Pedidos_Afectados=("Pedido", "nunique"),
-                            Monto_Total_Aprobado=("Monto_Signed", "sum")
-                        ).sort_values(by="Líneas_Aprobadas", ascending=False).head(15).reset_index(drop=True)
+                            Monto_Total=("Monto_Signed", "sum")
+                        ).sort_values(by="Líneas_Aprobadas", ascending=False).reset_index(drop=True)
 
-                        tb_top_aprob_csv_disp = tb_top_aprob_csv[["Tienda", "Líneas_Aprobadas", "Pedidos_Afectados", "Monto_Total_Aprobado"]].rename(columns={
+                        df_causas_aprob_disp = df_causas_aprob_grp.rename(columns={
+                            "Motivo_Norm": "Causa / Motivo de Aprobación",
                             "Líneas_Aprobadas": "Líneas Aprobadas",
-                            "Pedidos_Afectados": "Pedidos Afectados",
-                            "Monto_Total_Aprobado": "Monto Total Aprobado ($)"
+                            "Pedidos_Afectados": "Pedidos Únicos",
+                            "Monto_Total": "Monto Aprobado ($)"
                         })
 
                         st.dataframe(
-                            tb_top_aprob_csv_disp,
+                            df_causas_aprob_disp,
                             hide_index=True,
                             column_config={
-                                "Tienda": st.column_config.Column("Tienda", width="medium"),
-                                "Líneas Aprobadas": st.column_config.NumberColumn("Líneas Aprobadas", format="%d", width="medium"),
-                                "Pedidos Afectados": st.column_config.NumberColumn("Pedidos Afectados", format="%d", width="medium"),
-                                "Monto Total Aprobado ($)": st.column_config.NumberColumn("Monto Total Aprobado ($)", format="$%.2f", width="large")
+                                "Causa / Motivo de Aprobación": st.column_config.Column("Causa / Motivo de Aprobación", width="large"),
+                                "Líneas Aprobadas": st.column_config.NumberColumn("Líneas Aprobadas", format="%d", width="small"),
+                                "Pedidos Únicos": st.column_config.NumberColumn("Pedidos Únicos", format="%d", width="small"),
+                                "Monto Aprobado ($)": st.column_config.NumberColumn("Monto Aprobado ($)", format="$%.2f", width="medium")
                             }
                         )
+
+                        # 3. Distribución por Área de Salida (Filtrada)
+                        st.markdown("---")
+                        st.markdown(f"#### 📦 Distribución por Área de Salida en Rectificaciones Aprobadas ({causa_sel_aprob})")
+                        
+                        df_area_aprob_grp = df_csv_aprob_sec2.groupby(["Area_Salida", "Motivo_Norm"], as_index=False).agg(
+                            Líneas_Aprobadas=("Pedido", "count"),
+                            Pedidos_Unicos=("Pedido", "nunique"),
+                            Monto_Total=("Monto_Signed", "sum")
+                        ).sort_values(by=["Líneas_Aprobadas"], ascending=False).reset_index(drop=True)
+
+                        df_area_aprob_disp = df_area_aprob_grp.rename(columns={
+                            "Area_Salida": "Área de Salida",
+                            "Motivo_Norm": "Causa / Motivo",
+                            "Líneas_Aprobadas": "Líneas Aprobadas",
+                            "Pedidos_Unicos": "Pedidos Únicos",
+                            "Monto_Total": "Monto Total ($)"
+                        })
+
+                        st.dataframe(
+                            df_area_aprob_disp,
+                            hide_index=True,
+                            column_config={
+                                "Área de Salida": st.column_config.Column("Área de Salida", width="medium"),
+                                "Causa / Motivo": st.column_config.Column("Causa / Motivo", width="large"),
+                                "Líneas Aprobadas": st.column_config.NumberColumn("Líneas Aprobadas", format="%d", width="small"),
+                                "Pedidos Únicos": st.column_config.NumberColumn("Pedidos Únicos", format="%d", width="small"),
+                                "Monto Total ($)": st.column_config.NumberColumn("Monto Total ($)", format="$%.2f", width="medium")
+                            }
+                        )
+
+                        st.markdown("---")
+                        # 4. Top de Tiendas Aprobadas (Filtrado)
+                        st.markdown(f"### 🏆 Top de Tiendas con Mayor Cantidad de Líneas Aprobadas ({causa_sel_aprob})")
+
+                        if "Tienda" in df_csv_aprob_sec2.columns:
+                            tb_top_aprob_csv = df_csv_aprob_sec2.groupby("Tienda", as_index=False).agg(
+                                Líneas_Aprobadas=("Pedido", "count"),
+                                Pedidos_Afectados=("Pedido", "nunique"),
+                                Monto_Total_Aprobado=("Monto_Signed", "sum")
+                            ).sort_values(by="Líneas_Aprobadas", ascending=False).head(15).reset_index(drop=True)
+
+                            tb_top_aprob_csv_disp = tb_top_aprob_csv[["Tienda", "Líneas_Aprobadas", "Pedidos_Afectados", "Monto_Total_Aprobado"]].rename(columns={
+                                "Líneas_Aprobadas": "Líneas Aprobadas",
+                                "Pedidos_Afectados": "Pedidos Afectados",
+                                "Monto_Total_Aprobado": "Monto Total Aprobado ($)"
+                            })
+
+                            st.dataframe(
+                                tb_top_aprob_csv_disp,
+                                hide_index=True,
+                                column_config={
+                                    "Tienda": st.column_config.Column("Tienda", width="medium"),
+                                    "Líneas Aprobadas": st.column_config.NumberColumn("Líneas Aprobadas", format="%d", width="medium"),
+                                    "Pedidos Afectados": st.column_config.NumberColumn("Pedidos Afectados", format="%d", width="medium"),
+                                    "Monto Total Aprobado ($)": st.column_config.NumberColumn("Monto Total Aprobado ($)", format="$%.2f", width="large")
+                                }
+                            )
+                    else:
+                        st.info("ℹ️ No hay datos para la causa de aprobación seleccionada.")
                 else:
                     st.info("ℹ️ No hay rectificaciones aprobadas registradas en el archivo del portal.")
 
