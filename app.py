@@ -260,119 +260,223 @@ try:
     if not df_sla.empty:
         st.sidebar.header("🔍 Filtros de Búsqueda")
 
-        # 1. FILTRO DE ALMACÉN
+        # 1. FILTRO DE ALMACÉN EN POPOVER
         if "Almacen" in df_sla.columns:
             almacenes = sorted([str(x) for x in df_sla["Almacen"].dropna().unique()])
-            almacen_sel = st.sidebar.multiselect("Almacén:", almacenes, default=almacenes)
-            df_sla = df_sla[df_sla["Almacen"].astype(str).isin(almacen_sel)]
-            if not df_rect.empty and "Almacen" in df_rect.columns:
-                df_rect = df_rect[df_rect["Almacen"].astype(str).isin(almacen_sel)]
+            with st.sidebar.popover("🏭 Almacén", use_container_width=True):
+                st.markdown("**Almacenes Disponibles**")
+                alm_all_sb = st.checkbox("Seleccionar Todos los Almacenes", value=True, key="chk_all_alm_sidebar")
+                almacen_sel = []
+                for idx_a, alm_c in enumerate(almacenes):
+                    chk_a = st.checkbox(f"Almacén {alm_c}", value=alm_all_sb, key=f"chk_sb_alm_{idx_a}")
+                    if chk_a:
+                        almacen_sel.append(alm_c)
 
-        # 2. FILTRO DE GESTIÓN / ZONA EN DESPLEGABLE EXPANDIBLE
+            if almacen_sel:
+                df_sla = df_sla[df_sla["Almacen"].astype(str).isin(almacen_sel)]
+                if not df_rect.empty and "Almacen" in df_rect.columns:
+                    df_rect = df_rect[df_rect["Almacen"].astype(str).isin(almacen_sel)]
+            else:
+                df_sla = df_sla.iloc[0:0]
+                if not df_rect.empty:
+                    df_rect = df_rect.iloc[0:0]
+
+        # 2. FILTRO DE GESTIÓN / ZONA EN POPOVER
         if "Gestion" in df_sla.columns and df_sla["Gestion"].notna().any():
-            with st.sidebar.expander("🗺️ Gestión / Zona", expanded=False):
-                gestiones = sorted([str(x) for x in df_sla["Gestion"].dropna().unique()])
-                gestion_sel = st.multiselect("Seleccionar Gestión / Zona:", gestiones, default=gestiones, key="ms_gestion_sidebar")
+            gestiones = sorted([str(x) for x in df_sla["Gestion"].dropna().unique()])
+            with st.sidebar.popover("🗺️ Gestión / Zona", use_container_width=True):
+                st.markdown("**Gestiones / Zonas**")
+                gest_all_sb = st.checkbox("Seleccionar Todas las Gestiones", value=True, key="chk_all_gest_sidebar")
+                gestion_sel = []
+                for idx_g, gest_c in enumerate(gestiones):
+                    chk_g = st.checkbox(gest_c, value=gest_all_sb, key=f"chk_sb_gest_{idx_g}")
+                    if chk_g:
+                        gestion_sel.append(gest_c)
+
+            if gestion_sel:
                 df_sla = df_sla[df_sla["Gestion"].astype(str).isin(gestion_sel)]
                 if not df_rect.empty and "Gestion" in df_rect.columns:
                     df_rect = df_rect[df_rect["Gestion"].astype(str).isin(gestion_sel)]
+            else:
+                df_sla = df_sla.iloc[0:0]
 
-        # 3. FILTRO DE FRANQUICIADO / SUPERVISOR EN DESPLEGABLE EXPANDIBLE
+        # 3. FILTRO DE FRANQUICIADO / SUPERVISOR EN POPOVER
         if "Responsable_Tienda" in df_sla.columns and df_sla["Responsable_Tienda"].notna().any():
-            with st.sidebar.expander("👤 Franquiciado / Supervisor", expanded=False):
-                responsables = sorted([str(x) for x in df_sla["Responsable_Tienda"].dropna().unique()])
-                resp_sel = st.multiselect("Seleccionar Supervisor(es):", responsables, default=responsables, key="ms_resp_sidebar")
+            responsables = sorted([str(x) for x in df_sla["Responsable_Tienda"].dropna().unique()])
+            with st.sidebar.popover("👤 Franquiciado / Supervisor", use_container_width=True):
+                st.markdown("**Supervisores / Franquiciados**")
+                resp_all_sb = st.checkbox("Seleccionar Todos los Supervisores", value=True, key="chk_all_resp_sidebar")
+                resp_sel = []
+                for idx_r, resp_c in enumerate(responsables):
+                    chk_r = st.checkbox(resp_c, value=resp_all_sb, key=f"chk_sb_resp_{idx_r}")
+                    if chk_r:
+                        resp_sel.append(resp_c)
+
+            if resp_sel:
                 df_sla = df_sla[df_sla["Responsable_Tienda"].astype(str).isin(resp_sel)]
                 if not df_rect.empty and "Responsable_Tienda" in df_rect.columns:
                     df_rect = df_rect[df_rect["Responsable_Tienda"].astype(str).isin(resp_sel)]
+            else:
+                df_sla = df_sla.iloc[0:0]
 
-        # 4. FILTRO DE TIENDA EN DESPLEGABLE EXPANDIBLE
+        # 4. FILTRO DE TIENDA EN POPOVER
         if "Tienda" in df_sla.columns:
-            with st.sidebar.expander("🏪 Tienda", expanded=False):
-                tiendas = sorted([str(x) for x in df_sla["Tienda"].dropna().unique() if str(x) != "nan"])
-                tienda_sel = st.multiselect("Seleccionar Tienda(s):", tiendas, default=tiendas, key="ms_tienda_sidebar")
+            tiendas = sorted([str(x) for x in df_sla["Tienda"].dropna().unique() if str(x) != "nan"])
+            with st.sidebar.popover("🏪 Tienda", use_container_width=True):
+                st.markdown("**Lista de Tiendas**")
+                tienda_all_sb = st.checkbox("Seleccionar Todas las Tiendas", value=True, key="chk_all_tienda_sidebar")
+                tienda_sel = []
+                for idx_t, t_c in enumerate(tiendas):
+                    chk_t = st.checkbox(f"Tienda {t_c}", value=tienda_all_sb, key=f"chk_sb_t_{idx_t}")
+                    if chk_t:
+                        tienda_sel.append(t_c)
+
+            if tienda_sel:
                 df_sla = df_sla[df_sla["Tienda"].astype(str).isin(tienda_sel)]
                 if not df_rect.empty and "Tienda" in df_rect.columns:
                     df_rect = df_rect[df_rect["Tienda"].astype(str).isin(tienda_sel)]
+            else:
+                df_sla = df_sla.iloc[0:0]
 
-        # 5. FILTRO DINÁMICO DE ÁREA DE SALIDA EN DESPLEGABLE EXPANDIBLE
+        # 5. FILTRO DE ÁREA DE SALIDA EN POPOVER
         areas_sla = set(df_sla["Area_Salida"].dropna().astype(str).unique()) if "Area_Salida" in df_sla.columns else set()
         areas_rect = set(df_rect["Area_Salida"].dropna().astype(str).unique()) if not df_rect.empty and "Area_Salida" in df_rect.columns else set()
         areas_universo = areas_sla.union(areas_rect)
         areas_disponibles = sorted([a for a in areas_universo if a.strip() not in ["19", "24"]])
 
         if areas_disponibles:
-            with st.sidebar.expander("📦 Área de Salida", expanded=False):
-                area_sel = st.multiselect("Seleccionar Área(s) de Salida:", areas_disponibles, default=areas_disponibles, key="ms_area_sidebar")
+            with st.sidebar.popover("📦 Área de Salida", use_container_width=True):
+                st.markdown("**Sectores / Áreas de Salida**")
+                area_all_sb = st.checkbox("Seleccionar Todas las Áreas", value=True, key="chk_all_area_sidebar")
+                area_sel = []
+                for idx_ar, ar_c in enumerate(areas_disponibles):
+                    chk_ar = st.checkbox(f"Sector {ar_c}", value=area_all_sb, key=f"chk_sb_ar_{idx_ar}")
+                    if chk_ar:
+                        area_sel.append(ar_c)
+
+            if area_sel:
                 if "Area_Salida" in df_sla.columns:
                     df_sla = df_sla[df_sla["Area_Salida"].astype(str).isin(area_sel)]
                 if not df_rect.empty and "Area_Salida" in df_rect.columns:
                     df_rect = df_rect[df_rect["Area_Salida"].astype(str).isin(area_sel)]
+            else:
+                df_sla = df_sla.iloc[0:0]
 
-        # 6. FILTRO DE CASUÍSTICA / ESTADO PEDIDO EN DESPLEGABLE EXPANDIBLE
+        # 6. FILTRO DE CASUÍSTICA EN POPOVER
         if "Casuistica" in df_sla.columns:
-            with st.sidebar.expander("📋 Casuística / Estado Pedido", expanded=False):
-                orden_cas_filtro = [
-                    "Pedido Perfecto", "Sobrante Neto", 
-                    "Sustitución Misma Subfamilia", "Sustitución Distinta Subfamilia", 
-                    "Falta/Sobra", "Faltante Neto", "Formato no entregado", "Error facturación master", 
-                    "Etiquetas Cambiadas"
-                ]
-                casuisticas_presentes = [c for c in orden_cas_filtro if c in df_sla["Casuistica"].dropna().unique()]
-                otras_cas = [c for c in df_sla["Casuistica"].dropna().unique() if c not in casuisticas_presentes]
-                casuisticas_opciones = casuisticas_presentes + otras_cas
+            orden_cas_filtro = [
+                "Pedido Perfecto", "Sobrante Neto", 
+                "Sustitución Misma Subfamilia", "Sustitución Distinta Subfamilia", 
+                "Falta/Sobra", "Faltante Neto", "Formato no entregado", "Error facturación master", 
+                "Etiquetas Cambiadas"
+            ]
+            casuisticas_presentes = [c for c in orden_cas_filtro if c in df_sla["Casuistica"].dropna().unique()]
+            otras_cas = [c for c in df_sla["Casuistica"].dropna().unique() if c not in casuisticas_presentes]
+            casuisticas_opciones = casuisticas_presentes + otras_cas
 
-                casuistica_sel = st.multiselect("Seleccionar Casuística(s):", casuisticas_opciones, default=casuisticas_opciones, key="ms_casuistica_sidebar")
+            with st.sidebar.popover("📋 Casuística / Estado Pedido", use_container_width=True):
+                st.markdown("**Estados SLA de Pedido**")
+                cas_all_sb = st.checkbox("Seleccionar Todas las Casuísticas", value=True, key="chk_all_cas_sidebar")
+                casuistica_sel = []
+                for idx_c, cas_c in enumerate(casuisticas_opciones):
+                    chk_c = st.checkbox(cas_c, value=cas_all_sb, key=f"chk_sb_cas_{idx_c}")
+                    if chk_c:
+                        casuistica_sel.append(cas_c)
+
+            if casuistica_sel:
                 df_sla = df_sla[df_sla["Casuistica"].isin(casuistica_sel)]
-                
                 if not df_rect.empty:
                     pedidos_validos_cas = set(df_sla["Pedido"].dropna().unique())
                     df_rect = df_rect[df_rect["Pedido"].isin(pedidos_validos_cas)]
+            else:
+                df_sla = df_sla.iloc[0:0]
 
-        # 7. FILTRO DE ESTADO DE RECTIFICACIÓN (M / P / R)
+        # 7. FILTRO DE ESTADO DE RECTIFICACIÓN (M / P / R) EN POPOVER
         if not df_rect.empty and "Estado" in df_rect.columns:
             st.sidebar.markdown("---")
             st.sidebar.header("📋 Estado de Rectificación")
             estados_opciones = sorted([str(x) for x in df_rect["Estado"].dropna().unique() if str(x) != "nan"])
-            estado_sel = st.sidebar.multiselect(
-                "Estado Rectificación (M=Conf, P=Pend, R=Rech):", 
-                estados_opciones, 
-                default=estados_opciones,
-                help="M = Confirmada | P = Pendiente | R = Rechazada"
-            )
-            df_rect = df_rect[df_rect["Estado"].isin(estado_sel)]
+            
+            with st.sidebar.popover("📋 Estado Rectificación (M/P/R)", use_container_width=True):
+                st.markdown("**Estados de Rectificación**")
+                est_all_sb = st.checkbox("Seleccionar Todos los Estados", value=True, key="chk_all_est_sidebar")
+                estado_sel = []
+                for idx_e, est_c in enumerate(estados_opciones):
+                    lbl_e = "M (Confirmada)" if est_c == "M" else ("P (Pendiente)" if est_c == "P" else ("R (Rechazada)" if est_c == "R" else est_c))
+                    chk_e = st.checkbox(lbl_e, value=est_all_sb, key=f"chk_sb_est_{idx_e}")
+                    if chk_e:
+                        estado_sel.append(est_c)
 
-        # 8. FILTROS MAESTROS EN DESPLEGABLE EXPANDIBLE
+            if estado_sel:
+                df_rect = df_rect[df_rect["Estado"].isin(estado_sel)]
+            else:
+                df_rect = df_rect.iloc[0:0]
+
+        # 8. FILTROS DEL MAESTRO EN POPOVER
         if not df_rect.empty:
             st.sidebar.markdown("---")
-            with st.sidebar.expander("🏷️ Filtros del Maestro", expanded=False):
+            with st.sidebar.popover("🏷️ Filtros del Maestro (Familia/Subfam)", use_container_width=True):
                 if "Familia" in df_rect.columns and df_rect["Familia"].notna().any():
                     familias = sorted([str(x) for x in df_rect["Familia"].dropna().unique()])
-                    fam_sel = st.multiselect("Familia:", familias, default=familias, key="ms_fam_sidebar")
-                    df_rect = df_rect[df_rect["Familia"].astype(str).isin(fam_sel)]
+                    st.markdown("**Familias**")
+                    fam_all_sb = st.checkbox("Todas las Familias", value=True, key="chk_all_fam_sb")
+                    fam_sel = []
+                    for idx_fm, fam_c in enumerate(familias):
+                        if st.checkbox(fam_c, value=fam_all_sb, key=f"chk_sb_fam_{idx_fm}"):
+                            fam_sel.append(fam_c)
+                    if fam_sel:
+                        df_rect = df_rect[df_rect["Familia"].astype(str).isin(fam_sel)]
 
                 if "Subfamilia" in df_rect.columns and df_rect["Subfamilia"].notna().any():
                     subfamilias = sorted([str(x) for x in df_rect["Subfamilia"].dropna().unique()])
-                    subfam_sel = st.multiselect("Subfamilia:", subfamilias, default=subfamilias, key="ms_subfam_sidebar")
-                    df_rect = df_rect[df_rect["Subfamilia"].astype(str).isin(subfam_sel)]
+                    st.markdown("**Subfamilias**")
+                    subfam_all_sb = st.checkbox("Todas las Subfamilias", value=True, key="chk_all_subfam_sb")
+                    subfam_sel = []
+                    for idx_sfm, subfam_c in enumerate(subfamilias):
+                        if st.checkbox(subfam_c, value=subfam_all_sb, key=f"chk_sb_subfam_{idx_sfm}"):
+                            subfam_sel.append(subfam_c)
+                    if subfam_sel:
+                        df_rect = df_rect[df_rect["Subfamilia"].astype(str).isin(subfam_sel)]
 
                 if "Es_Master" in df_rect.columns and df_rect["Es_Master"].notna().any():
                     masters = sorted([str(x) for x in df_rect["Es_Master"].dropna().unique()])
-                    master_sel = st.multiselect("Producto Master (Sí/No):", masters, default=masters, key="ms_master_sidebar")
-                    df_rect = df_rect[df_rect["Es_Master"].astype(str).isin(master_sel)]
+                    st.markdown("**Producto Master**")
+                    mst_all_sb = st.checkbox("Todos los Formatos Master", value=True, key="chk_all_mst_sb")
+                    master_sel = []
+                    for idx_m, mst_c in enumerate(masters):
+                        if st.checkbox(f"Master {mst_c}", value=mst_all_sb, key=f"chk_sb_mst_{idx_m}"):
+                            master_sel.append(mst_c)
+                    if master_sel:
+                        df_rect = df_rect[df_rect["Es_Master"].astype(str).isin(master_sel)]
 
             pedidos_filtrados_maestro = set(df_rect["Pedido"].dropna().unique())
             df_sla = df_sla[df_sla["Pedido"].isin(pedidos_filtrados_maestro) | (df_sla["Casuistica"] == "Pedido Perfecto")]
 
-        if "Año" in df_sla.columns and df_sla["Año"].notna().any():
-            anios = sorted([int(x) for x in df_sla["Año"].dropna().unique()], reverse=True)
-            anio_sel = st.sidebar.multiselect("Año:", anios, default=anios)
-            df_sla = df_sla[df_sla["Año"].isin(anio_sel) | df_sla["Año"].isna()]
+        # 9. FILTRO DE AÑO Y MES EN POPOVER
+        if ("Año" in df_sla.columns and df_sla["Año"].notna().any()) or ("Mes" in df_sla.columns and df_sla["Mes"].notna().any()):
+            with st.sidebar.popover("📅 Periodo (Año / Mes)", use_container_width=True):
+                if "Año" in df_sla.columns and df_sla["Año"].notna().any():
+                    anios = sorted([int(x) for x in df_sla["Año"].dropna().unique()], reverse=True)
+                    st.markdown("**Año**")
+                    anio_all_sb = st.checkbox("Todos los Años", value=True, key="chk_all_anio_sb")
+                    anio_sel = []
+                    for idx_an, an_c in enumerate(anios):
+                        if st.checkbox(str(an_c), value=anio_all_sb, key=f"chk_sb_an_{idx_an}"):
+                            anio_sel.append(an_c)
+                    if anio_sel:
+                        df_sla = df_sla[df_sla["Año"].isin(anio_sel) | df_sla["Año"].isna()]
 
-        if "Mes" in df_sla.columns and df_sla["Mes"].notna().any():
-            meses = sorted([int(x) for x in df_sla["Mes"].dropna().unique()])
-            mes_sel = st.sidebar.multiselect("Mes:", meses, default=meses)
-            df_sla = df_sla[df_sla["Mes"].isin(mes_sel) | df_sla["Mes"].isna()]
+                if "Mes" in df_sla.columns and df_sla["Mes"].notna().any():
+                    meses = sorted([int(x) for x in df_sla["Mes"].dropna().unique()])
+                    st.markdown("**Mes**")
+                    mes_all_sb = st.checkbox("Todos los Meses", value=True, key="chk_all_mes_sb")
+                    mes_sel = []
+                    for idx_ms, ms_c in enumerate(meses):
+                        lbl_m = mapa_meses.get(ms_c, str(ms_c)) if 'mapa_meses' in locals() else str(ms_c)
+                        if st.checkbox(lbl_m, value=mes_all_sb, key=f"chk_sb_ms_{idx_ms}"):
+                            mes_sel.append(ms_c)
+                    if mes_sel:
+                        df_sla = df_sla[df_sla["Mes"].isin(mes_sel) | df_sla["Mes"].isna()]
 
         st.sidebar.markdown("---")
         st.sidebar.header("⚠️ Filtro de Outliers (Pocos Pedidos)")
@@ -2069,15 +2173,9 @@ try:
                 df_m_only = df_m_lines[df_m_lines["Es_Linea_Master"] == True].copy()
 
                 tiendas_m_opt = ["Todas las Tiendas"] + sorted([str(x) for x in df_m_only["Tienda"].dropna().unique() if str(x) != "nan"]) if "Tienda" in df_m_only.columns else ["Todas las Tiendas"]
-                col_tm_1, col_tm_2 = st.columns([2, 1])
-                with col_tm_1:
-                    t_master_sel = st.selectbox("Filtrar por Tienda:", tiendas_m_opt, index=0)
-                with col_tm_2:
-                    t_master_escribir = st.text_input("✍️ O escribir Nº de Tienda:", "", key="txt_tienda_h8_val")
+                t_master_sel = st.selectbox("🏪 Filtrar por Tienda:", tiendas_m_opt, index=0, key="sb_tienda_h7")
 
-                if t_master_escribir.strip() and "Tienda" in df_m_only.columns:
-                    df_m_only = df_m_only[df_m_only["Tienda"].astype(str).str.contains(t_master_escribir.strip(), case=False, na=False)]
-                elif t_master_sel != "Todas las Tiendas" and "Tienda" in df_m_only.columns:
+                if t_master_sel != "Todas las Tiendas" and "Tienda" in df_m_only.columns:
                     df_m_only = df_m_only[df_m_only["Tienda"].astype(str) == str(t_master_sel)]
 
                 tot_lineas_m = len(df_m_only)
