@@ -344,13 +344,13 @@ try:
 
         tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
             "📊 1. Ranking SLA por Almacén y Tienda",
-            "📈 2. Casuísticas y Modelo SLA",
-            "🏪 3. Auditoría Práctica por Tienda",
-            "🔄 4. Análisis de Sustituciones",
-            "📦 5. Rectificaciones por Área de Salida",
-            "🧩 6. Análisis de Unidades Sueltas",
-            "❌ 7. Análisis de Rectificaciones Anuladas",
-            "📦 8. Error Facturación Master (Líneas)"
+            "🏪 2. Auditoría Práctica por Tienda",
+            "🔄 3. Análisis de Sustituciones",
+            "📦 4. Rectificaciones por Área de Salida",
+            "🧩 5. Análisis de Unidades Sueltas",
+            "❌ 6. Rectificaciones del Portal",
+            "📦 7. Error Facturación Master (Líneas)",
+            "📖 8. Glosario"
         ])
 
         # HOJA 1
@@ -363,10 +363,12 @@ try:
             tot_pts_posibles_global = tot_pedidos_global * 10.0
             sla_global = (tot_pts_obtenidos_global / tot_pts_posibles_global * 10.0) if tot_pts_posibles_global > 0 else 0.0
 
+            pct_pedidos_rectif = (tot_pedidos_rectif_global / tot_pedidos_global * 100.0) if tot_pedidos_global > 0 else 0.0
+
             k1, k2, k3 = st.columns(3)
             k1.metric("⭐ Puntaje SLA Promedio", f"{sla_global:.2f} / 10.0")
             k2.metric("📦 Pedidos Totales", f"{tot_pedidos_global:,}")
-            k3.metric("⚠️ Pedidos con Rectificación", f"{tot_pedidos_rectif_global:,}")
+            k3.metric("⚠️ Pedidos con Rectificación", f"{tot_pedidos_rectif_global:,} ({pct_pedidos_rectif:.2f}%)")
 
             st.markdown("---")
             st.markdown("### 🏬 Evolución Mensual del SLA por Almacén")
@@ -491,6 +493,44 @@ try:
             st.plotly_chart(fig_comb, use_container_width=True)
 
             st.markdown("---")
+            st.markdown("### 📈 Distribución de rectificaciones por casuística")
+            tot_p = len(df_sla)
+            df_sla_tab1_cas = df_sla.copy()
+            df_sla_tab1_cas["Casuistica"] = df_sla_tab1_cas["Casuistica"].astype(str).str.strip()
+
+            cas_sum = df_sla_tab1_cas.groupby("Casuistica", as_index=False).agg(
+                Pedidos_Totales=("Pedido", "count"), 
+                Lineas_Rectificadas=("Lineas_Rectificadas_Confirmadas", "sum") if "Lineas_Rectificadas_Confirmadas" in df_sla_tab1_cas.columns else ("Pedido", "count")
+            )
+            cas_sum["% Participación Pedidos"] = (cas_sum["Pedidos_Totales"] / tot_p) * 100.0 if tot_p > 0 else 0.0
+            
+            orden_cas = [
+                "Pedido Perfecto", "Sobrante Neto", 
+                "Sustitución Misma Subfamilia", "Sustitución Distinta Subfamilia", 
+                "Falta/Sobra", "Faltante Neto", "Formato no entregado", "Error facturación master", 
+                "Etiquetas Cambiadas"
+            ]
+            cas_sum["Casuistica_Cat"] = pd.Categorical(cas_sum["Casuistica"], categories=orden_cas, ordered=True)
+            cas_sum = cas_sum.sort_values("Casuistica_Cat").drop(columns=["Casuistica_Cat"]).reset_index(drop=True)
+
+            cas_sum_display = cas_sum.rename(columns={
+                "Casuistica": "Casuística",
+                "Pedidos_Totales": "Pedidos Totales",
+                "Lineas_Rectificadas": "Líneas Rectificadas",
+                "% Participación Pedidos": "% Participación Pedidos"
+            })
+
+            st.dataframe(
+                cas_sum_display[["Casuística", "Pedidos Totales", "Líneas Rectificadas", "% Participación Pedidos"]],
+                hide_index=True,
+                column_config={
+                    "Casuística": st.column_config.Column("Casuística", width="medium"),
+                    "Pedidos Totales": st.column_config.NumberColumn("Pedidos Totales", format="%d", width="medium"),
+                    "Líneas Rectificadas": st.column_config.NumberColumn("Líneas Rectificadas", format="%d", width="medium"),
+                    "% Participación Pedidos": st.column_config.NumberColumn("% Participación Pedidos", format="%.2f %%", width="medium")
+                }
+            )
+
             st.markdown("### 🏪 Detalle por Franquiciado / Supervisor")
 
             if "Responsable_Tienda" in df_sla.columns:
@@ -507,12 +547,12 @@ try:
                 if not df_rect_h1_resp.empty and "Responsable_Tienda" in df_rect_h1_resp.columns:
                     df_rect_h1_resp = df_rect_h1_resp[df_rect_h1_resp["Responsable_Tienda"].astype(str) == str(sup_sel_hoja1)]
 
-            col_tiendas_lbl = "Total\\nTiendas"
-            col_totales_lbl = "Pedidos\\nTotales"
-            col_rectif_lbl = "Pedidos con\\nRectificaciones"
-            col_lin_lbl = "Líneas\\nRectificadas"
-            col_part_lin_lbl = "% Líneas\\nConfirmadas"
-            col_sla_lbl = "Puntaje SLA\\n(1 a 10)"
+            col_tiendas_lbl = "Total\nTiendas"
+            col_totales_lbl = "Pedidos\nTotales"
+            col_rectif_lbl = "Pedidos con\nRectificaciones"
+            col_lin_lbl = "Líneas\nRectificadas"
+            col_part_lin_lbl = "% Líneas\nConfirmadas"
+            col_sla_lbl = "Puntaje SLA\n(1 a 10)"
 
             group_cols_resp = ["Responsable_Tienda"] if "Responsable_Tienda" in df_sla_h1_resp.columns else ["Tienda"]
             tb_resp_base = df_sla_h1_resp.groupby(group_cols_resp, as_index=False).agg(
@@ -667,64 +707,8 @@ try:
                 }
             )
 
-        # HOJA 2: CASUÍSTICAS Y MODELO SLA
+        # HOJA 2: AUDITORÍA PRÁCTICA POR TIENDA
         with tab2:
-            st.subheader("📈 Matriz Ejecutiva de Casuísticas por Pedido")
-            tot_p = len(df_sla)
-            df_sla_tab2 = df_sla.copy()
-            df_sla_tab2["Casuistica"] = df_sla_tab2["Casuistica"].astype(str).str.strip()
-
-            cas_sum = df_sla_tab2.groupby("Casuistica", as_index=False).agg(
-                Pedidos_Totales=("Pedido", "count"), 
-                Lineas_Rectificadas=("Lineas_Rectificadas_Confirmadas", "sum") if "Lineas_Rectificadas_Confirmadas" in df_sla_tab2.columns else ("Pedido", "count")
-            )
-            cas_sum["% Participación Pedidos"] = (cas_sum["Pedidos_Totales"] / tot_p) * 100.0
-            
-            orden_cas = [
-                "Pedido Perfecto", "Sobrante Neto", 
-                "Sustitución Misma Subfamilia", "Sustitución Distinta Subfamilia", 
-                "Falta/Sobra", "Faltante Neto", "Formato no entregado", "Error facturación master", 
-                "Etiquetas Cambiadas"
-            ]
-            cas_sum["Casuistica_Cat"] = pd.Categorical(cas_sum["Casuistica"], categories=orden_cas, ordered=True)
-            cas_sum = cas_sum.sort_values("Casuistica_Cat").drop(columns=["Casuistica_Cat"]).reset_index(drop=True)
-
-            cas_sum_display = cas_sum.rename(columns={
-                "Casuistica": "Casuística",
-                "Pedidos_Totales": "Pedidos Totales",
-                "Lineas_Rectificadas": "Líneas Rectificadas",
-                "% Participación Pedidos": "% Participación Pedidos"
-            })
-
-            st.dataframe(
-                cas_sum_display[["Casuística", "Pedidos Totales", "Líneas Rectificadas", "% Participación Pedidos"]],
-                hide_index=True,
-                column_config={
-                    "Casuística": st.column_config.Column("Casuística", width="medium"),
-                    "Pedidos Totales": st.column_config.NumberColumn("Pedidos Totales", format="%d", width="medium"),
-                    "Líneas Rectificadas": st.column_config.NumberColumn("Líneas Rectificadas", format="%d", width="medium"),
-                    "% Participación Pedidos": st.column_config.NumberColumn("% Participación Pedidos", format="%.2f %%", width="medium")
-                }
-            )
-            
-            st.markdown("---")
-            st.subheader("📋 Reglas de Puntaje y Evaluación SLA por Pedido")
-            
-            matriz_p = pd.DataFrame([
-                {"Casuística Operativa": "Pedido Perfecto", "Descuento Aplicado": "0.0 Pts", "Puntaje por Pedido": "10.0 / 10", "Simplificado": "Pedido sin rectificaciones"},
-                {"Casuística Operativa": "Sobrante Neto", "Descuento Aplicado": "0.0 Pts", "Puntaje por Pedido": "10.0 / 10", "Simplificado": "Pedido con rectificación de sobra"},
-                {"Casuística Operativa": "Sustitución Misma Subfamilia", "Descuento Aplicado": "-2.5 Pts", "Puntaje por Pedido": "7.5 / 10", "Simplificado": "Pedido con rectificación de falta y sobra en artículos de igual subfamilia"},
-                {"Casuística Operativa": "Sustitución Distinta Subfamilia", "Descuento Aplicado": "-4.5 Pts", "Puntaje por Pedido": "5.5 / 10", "Simplificado": "Pedido con rectificación de falta y sobra en artículos de distintas subfamilias"},
-                {"Casuística Operativa": "Falta/Sobra", "Descuento Aplicado": "-5.5 Pts", "Puntaje por Pedido": "4.5 / 10", "Simplificado": "Pedido con rectificación de falta y sobra"},
-                {"Casuística Operativa": "Faltante Neto", "Descuento Aplicado": "-6.0 Pts", "Puntaje por Pedido": "4.0 / 10", "Simplificado": "Pedido con rectificación de solo falta"},
-                {"Casuística Operativa": "Formato no entregado", "Descuento Aplicado": "-6.0 Pts", "Puntaje por Pedido": "4.0 / 10", "Simplificado": "Pedido con rectificación de solo falta de más de 10 líneas"},
-                {"Casuística Operativa": "Error facturación master", "Descuento Aplicado": "-6.0 Pts", "Puntaje por Pedido": "4.0 / 10", "Simplificado": "Pedido con rectificación de falta en bultos Master"},
-                {"Casuística Operativa": "Etiquetas Cambiadas", "Descuento Aplicado": "-10.0 Pts", "Puntaje por Pedido": "0.0 / 10", "Simplificado": "Faltas y sobras simultáneas mayores o iguales a 12 líneas rectificadas"}
-            ])
-            st.dataframe(matriz_p, hide_index=True)
-
-        # HOJA 3: AUDITORÍA PRÁCTICA Y DETALLE DE RECTIFICACIONES POR TIENDA
-        with tab3:
             st.subheader("🏪 Auditoría Práctica y Detalle de Rectificaciones por Tienda")
             
             tiendas_unicas = sorted([str(x) for x in df_sla["Tienda"].dropna().unique() if str(x) != "nan"])
@@ -734,7 +718,7 @@ try:
             with c_tienda:
                 t_sel = st.selectbox("Seleccionar Tienda a Auditar:", opciones_tienda, index=0)
             
-            # FILTRO DESPLEGABLE DE CASUÍSTICAS EN HOJA 3
+            # FILTRO DESPLEGABLE DE CASUÍSTICAS EN HOJA 2
             orden_cas_tab3 = [
                 "Todas las Casuísticas",
                 "Sobrante Neto", "Sustitución Misma Subfamilia", 
@@ -758,7 +742,7 @@ try:
                     df_aud_sla = df_sla[df_sla["Tienda"].astype(str) == str(t_sel)].copy()
                     df_aud_rect = df_rect[df_rect["Tienda"].astype(str) == str(t_sel)].copy() if not df_rect.empty else pd.DataFrame()
 
-                # 2. Filtrado por Casuística Seleccionada en Hoja 3
+                # 2. Filtrado por Casuística Seleccionada en Hoja 2
                 if cas_sel_tab3 != "Todas las Casuísticas":
                     df_aud_sla = df_aud_sla[df_aud_sla["Casuistica"] == cas_sel_tab3]
                     if not df_aud_rect.empty:
@@ -981,8 +965,8 @@ try:
                 else:
                     st.success("🎉 La selección actual no presenta rectificaciones de artículos.")
 
-        # HOJA 4: ANÁLISIS EXCLUSIVO DE SUSTITUCIÓN DISTINTA SUBFAMILIA
-        with tab4:
+        # HOJA 3: ANÁLISIS EXCLUSIVO DE SUSTITUCIÓN DISTINTA SUBFAMILIA
+        with tab3:
             st.subheader("🔄 Análisis de Casos: Sustitución Distinta Subfamilia (Faltante > Sobrante)")
             st.markdown("Auditoría de pedidos clasificados como **'Sustitución Distinta Subfamilia'** detectados y grabados por la **Tienda (Procedencia 'T')** donde el producto **FALTANTE** posee un valor monetario **mayor** al producto **SOBRANTE** entregado.")
 
@@ -1096,17 +1080,8 @@ try:
                     tiendas_sust_opciones = sorted([str(x) for x in df_sust_analisis["Tienda"].dropna().unique() if str(x) != "nan"])
                     opciones_tienda_sust = ["Todas las Tiendas"] + tiendas_sust_opciones
                     
-                    col_sel_t, col_input_t = st.columns([2, 1])
-                    with col_sel_t:
-                        t_sust_sel = st.selectbox("Seleccionar Tienda a Auditar:", opciones_tienda_sust, index=0)
-                    with col_input_t:
-                        t_escribir = st.text_input("✍️ O escribir Nº de Tienda directamente:", "", help="Si escribes aquí un número de tienda, se aplicará directamente el filtro sobre las tablas inferiores.", key="txt_tienda_h4")
-
-                    tienda_final_filtro = "Todas las Tiendas"
-                    if t_escribir.strip():
-                        tienda_final_filtro = t_escribir.strip()
-                    elif t_sust_sel:
-                        tienda_final_filtro = t_sust_sel
+                    t_sust_sel = st.selectbox("Seleccionar Tienda a Auditar:", opciones_tienda_sust, index=0)
+                    tienda_final_filtro = t_sust_sel
 
                     st.markdown("### 📦 Pedidos con Mayor Diferencia Total de Pérdida")
 
@@ -1211,25 +1186,19 @@ try:
             else:
                 st.info("ℹ️ No existen pedidos de 'Sustitución Distinta Subfamilia' para la selección actual de filtros.")
 
-        # HOJA 5: RECTIFICACIONES POR ÁREA DE SALIDA
-        with tab5:
+        # HOJA 4: RECTIFICACIONES POR ÁREA DE SALIDA
+        with tab4:
             st.subheader("📦 Análisis de Rectificaciones por Área de Salida")
             st.markdown("Consolidado y auditoría de pedidos rectificados por **Área de Salida** (se excluyen automáticamente las rectificaciones rechazadas en **Estado 'R'**).")
 
             if not df_rect.empty:
                 df_r_area = df_rect.copy()
 
-                # Filtro por Tienda en Hoja 5
+                # Filtro por Tienda en Hoja 4
                 tiendas_area_opt = ["Todas las Tiendas"] + sorted([str(x) for x in df_r_area["Tienda"].dropna().unique() if str(x) != "nan"]) if "Tienda" in df_r_area.columns else ["Todas las Tiendas"]
-                col_t_h5_1, col_t_h5_2 = st.columns([2, 1])
-                with col_t_h5_1:
-                    t_area_sel = st.selectbox("Filtrar por Tienda:", tiendas_area_opt, index=0)
-                with col_t_h5_2:
-                    t_area_escribir = st.text_input("✍️ O escribir Nº de Tienda:", "", key="txt_tienda_h5")
+                t_area_sel = st.selectbox("Filtrar por Tienda:", tiendas_area_opt, index=0)
 
-                if t_area_escribir.strip() and "Tienda" in df_r_area.columns:
-                    df_r_area = df_r_area[df_r_area["Tienda"].astype(str).str.contains(t_area_escribir.strip(), case=False, na=False)]
-                elif t_area_sel != "Todas las Tiendas" and "Tienda" in df_r_area.columns:
+                if t_area_sel != "Todas las Tiendas" and "Tienda" in df_r_area.columns:
                     df_r_area = df_r_area[df_r_area["Tienda"].astype(str) == str(t_area_sel)]
                 
                 # Excluir de forma predeterminada las rectificaciones rechazadas 'R'
@@ -1415,8 +1384,8 @@ try:
             else:
                 st.info("ℹ️ No hay rectificaciones registradas para el análisis por Área de Salida.")
 
-        # HOJA 6: AUDITORÍA DE UNIDADES SUELTAS (FUERA DE CLASIFICACIÓN SLA)
-        with tab6:
+        # HOJA 5: AUDITORÍA DE UNIDADES SUELTAS (FUERA DE CLASIFICACIÓN SLA)
+        with tab5:
             st.subheader("🧩 Análisis de Unidades Sueltas (Rectificaciones Menores a 1 Bulto Común - UxB)")
             st.markdown("Auditoría independiente fuera de la clasificación de SLA para identificar aquellas **líneas rectificadas cuya cantidad enviada o reclamada es menor a un bulto cerrado** (`Unidades < UxB`). Permite auditar la incidencia de preparación por unidades sueltas por tienda y sector.")
 
@@ -1554,103 +1523,179 @@ try:
             else:
                 st.info("ℹ️ No hay rectificaciones disponibles para auditar unidades sueltas.")
 
-        # HOJA 7: ANÁLISIS DE RECTIFICACIONES ANULADAS (ESTADO R)
-        with tab7:
-            st.subheader("❌ Análisis de Rectificaciones Anuladas / Rechazadas (Estado R)")
-            st.markdown("Auditoría detallada de las rectificaciones que fueron **anuladas o rechazadas** en el sistema, analizando las causas registradas (*Foto, Unidades, Incidencia, Auditado, Errores/Irregulares, Otros, etc.*) y su impacto por tienda y pedido.")
+        # HOJA 6: ANÁLISIS DE RECTIFICACIONES DE PORTAL
+        with tab6:
+            st.subheader("❌ Rectificaciones del Portal y Causas de Anulación")
+            st.markdown("Auditoría independiente fuera del cálculo del SLA. Esta vista consolida el análisis de rectificaciones registradas en el portal (**Rechazadas/Anuladas 'R'**) y la distribución de causas de anulación por Almacén.")
 
-            if not df_anul.empty:
-                df_a_view = df_anul.copy()
+            if not df_rect.empty:
+                df_portal_all = df_rect.copy()
 
-                # Aplicar filtros globales de Sidebar a Anulaciones (si existen columnas)
-                if "Almacen" in df_a_view.columns and 'almacen_sel' in locals():
-                    df_a_view = df_a_view[df_a_view["Almacen"].astype(str).isin(almacen_sel)]
+                col_art_portal = "Artículo" if "Artículo" in df_portal_all.columns else ("SKU" if "SKU" in df_portal_all.columns else "Producto")
+                col_desc_portal = "Descripción" if "Descripción" in df_portal_all.columns else "Producto"
 
-                if "Gestion" in df_a_view.columns and 'gestion_sel' in locals():
-                    df_a_view = df_a_view[df_a_view["Gestion"].astype(str).isin(gestion_sel)]
-
-                if "Tienda" in df_a_view.columns and 'tienda_sel' in locals():
-                    df_a_view = df_a_view[df_a_view["Tienda"].astype(str).isin(tienda_sel)]
-
-                if "Responsable_Tienda" in df_a_view.columns and 'resp_sel' in locals():
-                    df_a_view = df_a_view[df_a_view["Responsable_Tienda"].astype(str).isin(resp_sel)]
-
-                # Convención de signos: Falta = +, Sobra = -
-                if "Tipo" in df_a_view.columns and "Monto" in df_a_view.columns:
-                    df_a_view["Factor_Signo"] = df_a_view["Tipo"].astype(str).str.strip().str.capitalize().apply(lambda x: -1.0 if "Sobra" in x or x == "S" else 1.0)
-                    df_a_view["Monto_Signed"] = df_a_view["Monto"] * df_a_view["Factor_Signo"]
+                col_motivo_p = "Motivo_Clean" if "Motivo_Clean" in df_portal_all.columns else ("Motivo" if "Motivo" in df_portal_all.columns else None)
+                if col_motivo_p:
+                    df_portal_all["Factor_Signo"] = df_portal_all[col_motivo_p].astype(str).str.strip().str.upper().apply(lambda x: -1.0 if x == "S" else 1.0)
                 else:
-                    df_a_view["Monto_Signed"] = df_a_view["Monto"] if "Monto" in df_a_view.columns else 0.0
+                    df_portal_all["Factor_Signo"] = 1.0
 
-                tot_lin_anul = len(df_a_view)
-                tot_ped_anul = df_a_view["Pedido"].nunique() if "Pedido" in df_a_view.columns else 0
-                tot_tien_anul = df_a_view["Tienda"].nunique() if "Tienda" in df_a_view.columns else 0
-                tot_monto_anul = df_a_view["Monto_Signed"].sum()
+                df_portal_all["Monto_Signed"] = df_portal_all["Monto_Rectif"] * df_portal_all["Factor_Signo"]
 
-                u1, u2, u3, u4 = st.columns(4)
-                u1.metric("❌ Líneas Anuladas Totales", f"{tot_lin_anul:,}")
-                u2.metric("📦 Pedidos Afectados", f"{tot_ped_anul:,}")
-                u3.metric("🏪 Tiendas Involucradas", f"{tot_tien_anul:,}")
-                u4.metric("💰 Importe Total Anulado ($)", f"${tot_monto_anul:,.2f}")
+                # Separar solo Rechazadas / Anuladas
+                df_rect_r = df_portal_all[df_portal_all["Estado"] == "R"].copy()
+
+                tot_lin_r = len(df_rect_r)
+                tot_monto_r = df_rect_r["Monto_Signed"].sum() if not df_rect_r.empty else 0.0
+                tot_ped_r = df_rect_r["Pedido"].nunique() if not df_rect_r.empty and "Pedido" in df_rect_r.columns else 0
+                tot_tien_r = df_rect_r["Tienda"].nunique() if not df_rect_r.empty and "Tienda" in df_rect_r.columns else 0
+
+                r1, r2, r3, r4 = st.columns(4)
+                r1.metric("❌ Líneas Anuladas / Rechazadas", f"{tot_lin_r:,}")
+                r2.metric("📦 Pedidos Afectados", f"{tot_ped_r:,}")
+                r3.metric("🏪 Tiendas Involucradas", f"{tot_tien_r:,}")
+                r4.metric("💰 Importe Total Anulado ($)", f"${tot_monto_r:,.2f}")
 
                 st.markdown("---")
 
-                # Gráfico y Resumen por Causa de Anulación
-                col_causa = "Causa_Anulacion" if "Causa_Anulacion" in df_a_view.columns else ("Motivo" if "Motivo" in df_a_view.columns else None)
-                if col_causa:
-                    col_g_a1, col_g_a2 = st.columns([1, 1])
-                    
-                    df_causas_grp = df_a_view.groupby(col_causa, as_index=False).agg(
-                        Líneas_Anuladas=("Pedido", "count"),
-                        Pedidos_Afectados=("Pedido", "nunique") if "Pedido" in df_a_view.columns else ("Almacen", "count"),
-                        Monto_Total=("Monto_Signed", "sum")
-                    ).sort_values(by="Líneas_Anuladas", ascending=False).reset_index(drop=True)
+            # ------------------------------------------------------------------
+            # SECCIÓN: GRÁFICO APILADO Y TABLA DE RESUMEN POR CAUSA
+            # ------------------------------------------------------------------
+            st.markdown("### 📊 Distribución Porcentual (%) y Cantidad de Almacenes por Causa de Anulación")
 
-                    with col_g_a1:
-                        fig_causas = px.bar(
-                            df_causas_grp, x=col_causa, y="Líneas_Anuladas",
-                            color=col_causa, text="Líneas_Anuladas",
-                            title="<b>Cantidad de Líneas Anuladas por Causa de Anulación</b>"
-                        )
-                        fig_causas.update_traces(textposition='outside')
-                        fig_causas.update_layout(
-                            xaxis_title="Causa / Motivo de Anulación", yaxis_title="Cantidad de Líneas",
-                            height=380, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                            showlegend=False
-                        )
-                        st.plotly_chart(fig_causas, use_container_width=True)
+            if not df_anul.empty:
+                df_a_graf = df_anul.copy()
 
-                    with col_g_a2:
-                        st.markdown("#### 📋 Resumen por Causa de Anulación")
-                        df_causas_disp = df_causas_grp.rename(columns={
-                            col_causa: "Causa de Anulación",
-                            "Líneas_Anuladas": "Líneas Anuladas",
-                            "Pedidos_Afectados": "Pedidos Únicos",
-                            "Monto_Total": "Monto Anulado ($)"
-                        })
-                        st.dataframe(
-                            df_causas_disp,
-                            hide_index=True,
-                            column_config={
-                                "Causa de Anulación": st.column_config.Column("Causa de Anulación", width="large"),
-                                "Líneas Anuladas": st.column_config.NumberColumn("Líneas Anuladas", format="%d", width="small"),
-                                "Pedidos Únicos": st.column_config.NumberColumn("Pedidos Únicos", format="%d", width="small"),
-                                "Monto Anulado ($)": st.column_config.NumberColumn("Monto Anulado ($)", format="$%.2f", width="medium")
-                            }
-                        )
+                # Normalización de mes y causa
+                if "Fecha" in df_a_graf.columns:
+                    f_str_a = df_a_graf["Fecha"].astype(str).str.strip()
+                    f_dt_a = pd.to_datetime(f_str_a, format="%Y%m%d", errors="coerce")
+                    mask_a_na = f_dt_a.isna()
+                    if mask_a_na.any():
+                        f_dt_a[mask_a_na] = pd.to_datetime(f_str_a[mask_a_na], dayfirst=True, errors="coerce")
+                    df_a_graf["Mes_Num"] = f_dt_a.dt.month.fillna(0).astype(int)
+                elif "Mes" in df_a_graf.columns:
+                    df_a_graf["Mes_Num"] = pd.to_numeric(df_a_graf["Mes"], errors="coerce").fillna(0).astype(int)
+                else:
+                    df_a_graf["Mes_Num"] = 0
+
+                mapa_meses_a = {1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"}
+                df_a_graf["Nombre_Mes"] = df_a_graf["Mes_Num"].map(mapa_meses_a).fillna("Sin Mes")
+
+                col_causa_g = "Causa_Anulacion" if "Causa_Anulacion" in df_a_graf.columns else ("Motivo" if "Motivo" in df_a_graf.columns else "Tipo")
+                df_a_graf[col_causa_g] = df_a_graf[col_causa_g].fillna("Sin Causa").astype(str).str.strip()
+
+                if "Almacen" not in df_a_graf.columns:
+                    df_a_graf["Almacen"] = "501"
+
+                df_a_graf["Etiqueta_Almacen"] = "Almacén " + df_a_graf["Almacen"].astype(str)
+
+                # Convención de signo
+                if "Tipo" in df_a_graf.columns and "Monto" in df_a_graf.columns:
+                    df_a_graf["Factor_Signo"] = df_a_graf["Tipo"].astype(str).str.strip().str.capitalize().apply(lambda x: -1.0 if "Sobra" in x or x == "S" else 1.0)
+                    df_a_graf["Monto_Signed"] = df_a_graf["Monto"] * df_a_graf["Factor_Signo"]
+                else:
+                    df_a_graf["Monto_Signed"] = df_a_graf["Monto"] if "Monto" in df_a_graf.columns else 0.0
+
+                # FILTRO DESPLEGABLE EXCLUSIVO PARA EL GRÁFICO
+                causas_unicas = sorted([str(x) for x in df_a_graf[col_causa_g].unique() if str(x).strip() != ""])
+                opciones_causas = ["Todas las Causas"] + causas_unicas
+
+                col_f1, col_f2 = st.columns([2, 2])
+                with col_f1:
+                    causa_sel_desplegable = st.selectbox(
+                        "🔍 Seleccionar Causa de Anulación (Aplica ÚNICAMENTE al Gráfico):",
+                        options=opciones_causas,
+                        index=0,
+                        key="sb_causa_desplegable"
+                    )
+
+                if causa_sel_desplegable != "Todas las Causas":
+                    df_a_graf_filt = df_a_graf[df_a_graf[col_causa_g] == causa_sel_desplegable].copy()
+                else:
+                    df_a_graf_filt = df_a_graf.copy()
+
+                # Renderizar primero el Gráfico en ancho completo
+                if not df_a_graf_filt.empty:
+                    grp_a = df_a_graf_filt.groupby(["Mes_Num", "Nombre_Mes", "Etiqueta_Almacen"], as_index=False).agg(
+                        Cant_Lineas=("Pedido" if "Pedido" in df_a_graf_filt.columns else "Almacen", "count")
+                    )
+
+                    tot_mes = grp_a.groupby(["Mes_Num", "Nombre_Mes"])["Cant_Lineas"].transform("sum")
+                    grp_a["Porcentaje"] = (grp_a["Cant_Lineas"] / tot_mes * 100.0).fillna(0.0)
+                    grp_a["Etiqueta_Texto"] = grp_a.apply(lambda r: f"<b>{r['Porcentaje']:.1f}%</b><br>({int(r['Cant_Lineas']):,} líns)", axis=1)
+
+                    meses_presentes = sorted([m for m in grp_a["Mes_Num"].unique() if m in mapa_meses_a])
+                    orden_meses_nombres = [mapa_meses_a[m] for m in meses_presentes]
+
+                    mapa_colores_alm_g = {
+                        "Almacén 501": "#9B59B6", "Almacén 503": "#2BA884", 
+                        "Almacén 504": "#D06A4C", "Almacén 509": "#E09F53", "Almacén 514": "#2B5C8F"
+                    }
+
+                    fig_apilado = px.bar(
+                        grp_a,
+                        x="Nombre_Mes",
+                        y="Porcentaje",
+                        color="Etiqueta_Almacen",
+                        title=f"<b>Distribución Porcentual (%) y Cantidad por Almacén ({causa_sel_desplegable})</b>",
+                        text="Etiqueta_Texto",
+                        color_discrete_map=mapa_colores_alm_g,
+                        barmode="stack",
+                        hover_data={"Cant_Lineas": ":,", "Porcentaje": ":.2f%"}
+                    )
+
+                    fig_apilado.update_traces(textposition='inside')
+                    fig_apilado.update_layout(
+                        xaxis=dict(title="Mes", categoryorder="array", categoryarray=orden_meses_nombres),
+                        yaxis=dict(title="Porcentaje de Participación (%)", range=[0, 100]),
+                        height=430,
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        legend_title_text="Almacén"
+                    )
+
+                    st.plotly_chart(fig_apilado, use_container_width=True)
+                else:
+                    st.info("ℹ️ No hay datos para la causa seleccionada en el gráfico.")
+
+                st.markdown("---")
+                st.markdown("#### 📋 Resumen por Causa de Anulación (Consolidado General)")
+                df_causas_grp = df_a_graf.groupby(col_causa_g, as_index=False).agg(
+                    Líneas_Anuladas=("Pedido" if "Pedido" in df_a_graf.columns else "Almacen", "count"),
+                    Pedidos_Afectados=("Pedido", "nunique") if "Pedido" in df_a_graf.columns else ("Almacen", "count"),
+                    Monto_Total=("Monto_Signed", "sum")
+                ).sort_values(by="Líneas_Anuladas", ascending=False).reset_index(drop=True)
+
+                df_causas_disp = df_causas_grp.rename(columns={
+                    col_causa_g: "Causa de Anulación",
+                    "Líneas_Anuladas": "Líneas Anuladas",
+                    "Pedidos_Afectados": "Pedidos Únicos",
+                    "Monto_Total": "Monto Anulado ($)"
+                })
+
+                st.dataframe(
+                    df_causas_disp,
+                    hide_index=True,
+                    column_config={
+                        "Causa de Anulación": st.column_config.Column("Causa de Anulación", width="large"),
+                        "Líneas Anuladas": st.column_config.NumberColumn("Líneas Anuladas", format="%d", width="small"),
+                        "Pedidos Únicos": st.column_config.NumberColumn("Pedidos Únicos", format="%d", width="small"),
+                        "Monto Anulado ($)": st.column_config.NumberColumn("Monto Anulado ($)", format="$%.2f", width="medium")
+                    }
+                )
 
                 st.markdown("---")
                 st.markdown("### 🏆 Top de Tiendas con Mayor Cantidad de Líneas Anuladas")
 
-                if "Tienda" in df_a_view.columns:
-                    tb_top_anul = df_a_view.groupby("Tienda", as_index=False).agg(
-                        Líneas_Anuladas=("Pedido", "count"),
-                        Pedidos_Afectados=("Pedido", "nunique") if "Pedido" in df_a_view.columns else ("Almacen", "count"),
+                if "Tienda" in df_a_graf.columns:
+                    tb_top_anul = df_a_graf.groupby("Tienda", as_index=False).agg(
+                        Líneas_Anuladas=("Pedido" if "Pedido" in df_a_graf.columns else "Almacen", "count"),
+                        Pedidos_Afectados=("Pedido", "nunique") if "Pedido" in df_a_graf.columns else ("Almacen", "count"),
                         Monto_Total_Anulado=("Monto_Signed", "sum")
                     ).sort_values(by="Líneas_Anuladas", ascending=False).head(15).reset_index(drop=True)
 
-                    cols_top_a = ["Tienda", "Líneas_Anuladas", "Pedidos_Afectados", "Monto_Total_Anulado"]
-                    tb_top_anul_disp = tb_top_anul[cols_top_a].rename(columns={
+                    tb_top_anul_disp = tb_top_anul[["Tienda", "Líneas_Anuladas", "Pedidos_Afectados", "Monto_Total_Anulado"]].rename(columns={
                         "Líneas_Anuladas": "Líneas Anuladas",
                         "Pedidos_Afectados": "Pedidos Afectados",
                         "Monto_Total_Anulado": "Monto Total Anulado ($)"
@@ -1666,71 +1711,69 @@ try:
                             "Monto Total Anulado ($)": st.column_config.NumberColumn("Monto Total Anulado ($)", format="$%.2f", width="large")
                         }
                     )
-
-                st.markdown("---")
-                st.markdown("### 🔎 Detalle Individual de Rectificaciones Anuladas por Tienda y Pedido")
-
-                col_anul_t, col_anul_p = st.columns([2, 2])
-                with col_anul_t:
-                    tiendas_anul_opt = ["Todas las Tiendas"] + sorted([str(x) for x in df_a_view["Tienda"].dropna().unique() if str(x) != "nan"]) if "Tienda" in df_a_view.columns else ["Todas las Tiendas"]
-                    t_anul_sel = st.selectbox("Seleccionar Tienda a Auditar (Anulaciones):", tiendas_anul_opt, index=0)
-
-                with col_anul_p:
-                    busqueda_ped_anul = st.text_input("🔍 Filtrar por Número de Pedido (Anulaciones):", "", key="txt_ped_h7")
-
-                df_anul_det_filtrado = df_a_view.copy()
-
-                if t_anul_sel != "Todas las Tiendas" and "Tienda" in df_anul_det_filtrado.columns:
-                    df_anul_det_filtrado = df_anul_det_filtrado[df_anul_det_filtrado["Tienda"].astype(str) == str(t_anul_sel)]
-
-                if busqueda_ped_anul.strip() and "Pedido" in df_anul_det_filtrado.columns:
-                    df_anul_det_filtrado = df_anul_det_filtrado[
-                        df_anul_det_filtrado["Pedido"].astype(str).str.contains(busqueda_ped_anul.strip(), case=False, na=False)
-                    ]
-
-                cols_anul_disp = ["Almacen", "Tienda", "Pedido", "Nota_Nro", "Fecha", "Tipo", "Cant_Blt", "Monto_Signed", "Fecha_Modif", "Estado", "Causa_Anulacion", "Estado_RP", "Lote_RPA"]
-                cols_anul_exist = [c for c in cols_anul_disp if c in df_anul_det_filtrado.columns]
-
-                df_anul_clean = df_anul_det_filtrado[cols_anul_exist].rename(columns={
-                    "Almacen": "Almacén",
-                    "Tienda": "Tienda",
-                    "Pedido": "Pedido",
-                    "Nota_Nro": "Nota Nro",
-                    "Fecha": "Fecha",
-                    "Tipo": "Tipo (Falta/Sobra)",
-                    "Cant_Blt": "Cnt. Blt.",
-                    "Monto_Signed": "Imp ($)",
-                    "Fecha_Modif": "Fch. Modif.",
-                    "Estado": "Estado",
-                    "Causa_Anulacion": "Motivo / Causa",
-                    "Estado_RP": "Estado RP",
-                    "Lote_RPA": "Lote RPA"
-                })
-
-                st.dataframe(
-                    df_anul_clean,
-                    hide_index=True,
-                    column_config={
-                        "Almacén": st.column_config.Column("Almacén", width="small"),
-                        "Tienda": st.column_config.Column("Tienda", width="small"),
-                        "Pedido": st.column_config.Column("Pedido", width="medium"),
-                        "Nota Nro": st.column_config.Column("Nota Nro", width="small"),
-                        "Fecha": st.column_config.Column("Fecha", width="small"),
-                        "Tipo (Falta/Sobra)": st.column_config.Column("Tipo", width="small"),
-                        "Cnt. Blt.": st.column_config.NumberColumn("Cnt. Blt.", format="%.2f", width="small"),
-                        "Imp ($)": st.column_config.NumberColumn("Imp ($)", format="$%.2f", width="medium"),
-                        "Fch. Modif.": st.column_config.Column("Fch. Modif.", width="medium"),
-                        "Estado": st.column_config.Column("Estado", width="small"),
-                        "Motivo / Causa": st.column_config.Column("Motivo / Causa Anulación", width="large"),
-                        "Estado RP": st.column_config.Column("Estado RP", width="small"),
-                        "Lote RPA": st.column_config.Column("Lote RPA", width="small")
-                    }
-                )
             else:
-                st.info("ℹ️ No se cargaron datos del CSV 'causa anulaciones' o no se registraron anulaciones.")
+                st.info("ℹ️ No hay datos de causas de anulación disponibles.")
 
-        # HOJA 8: ANÁLISIS DE ERROR FACTURACIÓN MASTER (ANÁLISIS DE LÍNEAS INDIVIDUALES)
-        with tab8:
+            st.markdown("---")
+            st.markdown("### ❌ Detalle Individual de Rectificaciones Anuladas / Rechazadas (Estado R)")
+
+            if not df_rect.empty:
+                df_rect_r = df_rect[df_rect["Estado"] == "R"].copy()
+
+                if not df_rect_r.empty:
+                    tiendas_r_opt = ["Todas las Tiendas"] + sorted([str(x) for x in df_rect_r["Tienda"].dropna().unique() if str(x) != "nan"]) if "Tienda" in df_rect_r.columns else ["Todas las Tiendas"]
+                    
+                    t_r_sel = st.selectbox("Filtrar por Tienda (Rechazadas):", tiendas_r_opt, index=0, key="sb_tienda_r")
+
+                    df_r_view = df_rect_r.copy()
+                    if t_r_sel != "Todas las Tiendas" and "Tienda" in df_r_view.columns:
+                        df_r_view = df_r_view[df_r_view["Tienda"].astype(str) == str(t_r_sel)]
+
+                    busqueda_ped_r = st.text_input("🔍 Filtrar por Número de Pedido (Rechazadas):", "", key="txt_ped_r")
+                    if busqueda_ped_r:
+                        df_r_view = df_r_view[df_r_view["Pedido"].astype(str).str.contains(busqueda_ped_r.strip(), case=False, na=False)]
+
+                    cols_r_disp = [
+                        "Almacen", "Tienda", "Pedido", "Area_Salida", col_art_portal, col_desc_portal, 
+                        "Unidades_Num", "UxB", "Motivo", "Procedencia", "Estado", "Monto_Signed"
+                    ]
+                    cols_exist_r = [c for c in cols_r_disp if c in df_r_view.columns]
+
+                    df_r_clean = df_r_view[cols_exist_r].rename(columns={
+                        "Almacen": "Almacén",
+                        "Area_Salida": "Área de Salida",
+                        col_art_portal: "SKU",
+                        col_desc_portal: "Producto / Descripción",
+                        "Unidades_Num": "Unid. Rectificadas",
+                        "UxB": "UxB",
+                        "Monto_Signed": "Monto ($)"
+                    })
+
+                    st.dataframe(
+                        df_r_clean,
+                        hide_index=True,
+                        column_config={
+                            "Almacén": st.column_config.Column("Almacén", width="small"),
+                            "Tienda": st.column_config.Column("Tienda", width="small"),
+                            "Pedido": st.column_config.Column("Pedido", width="medium"),
+                            "Área de Salida": st.column_config.Column("Área de Salida", width="medium"),
+                            "SKU": st.column_config.Column("SKU", width="small"),
+                            "Producto / Descripción": st.column_config.Column("Producto / Descripción", width="large"),
+                            "Unid. Rectificadas": st.column_config.NumberColumn("Unid. Rectificadas", format="%.0f", width="small"),
+                            "UxB": st.column_config.NumberColumn("UxB", format="%.0f", width="small"),
+                            "Motivo": st.column_config.Column("Motivo", width="small"),
+                            "Procedencia": st.column_config.Column("Procedencia", width="small"),
+                            "Estado": st.column_config.Column("Estado", width="small"),
+                            "Monto ($)": st.column_config.NumberColumn("Monto ($)", format="$%.2f", width="medium")
+                        }
+                    )
+                else:
+                    st.info("🎉 No hay rectificaciones rechazadas en la selección actual.")
+            else:
+                st.info("ℹ️ No hay datos de rectificaciones del portal cargados.")
+
+
+        with tab7:
             st.subheader("📦 Análisis de Líneas con Error de Facturación Master")
             st.markdown("Auditoría enfocada exclusivamente a nivel **línea de artículo / SKU** para identificar todas aquellas rectificaciones que corresponden a desvíos de **Bulto Máster / Empaque**, independientemente de la clasificación SLA del pedido completo.")
 
@@ -1743,10 +1786,6 @@ try:
 
                 col_art_m = "Artículo" if "Artículo" in df_m_lines.columns else ("SKU" if "SKU" in df_m_lines.columns else "Producto")
 
-                # Criterio dinámico para identificar líneas con Error de Facturación Master:
-                # 1. La cantidad coincide con UxM (> UxB) o múltiplos de UxM
-                # 2. La cantidad coincide con la diferencia (UxM - UxB)
-                # 3. La línea viene marcada como Es_Master = 'Sí'
                 def es_linea_master_check(row):
                     sku = str(row.get(col_art_m, "")).strip().lstrip("0")
                     unid = float(row.get("Unidades_Num", 0.0))
@@ -1755,15 +1794,12 @@ try:
                     uxm = float(row.get("UxM", uxb * bulfm if uxb > 0 else 0.0))
                     es_m_flag = str(row.get("Es_Master", "")).strip().upper() in ["SI", "SÍ"]
 
-                    # REGLA 1 STRICTA: DEBE ser un producto Máster ÚNICAMENTE si Es_Master es 'Sí'
                     if not es_m_flag:
                         return False
 
-                    # REGLA 2: EXCLUSIÓN ESTRICTA - Si rectifica 1 Bulto Común (UxB), NUNCA es Error Máster
                     if uxb > 0.0 and unid == uxb:
                         return False
 
-                    # REGLA 3: La cantidad DEBE ser igual o múltiplo entero de UxM (Bulto Máster Completo)
                     if uxm > uxb and unid > 0.0:
                         if unid == uxm or unid % uxm == 0:
                             return True
@@ -1776,7 +1812,6 @@ try:
                 df_m_lines["Es_Linea_Master"] = df_m_lines.apply(es_linea_master_check, axis=1)
                 df_m_only = df_m_lines[df_m_lines["Es_Linea_Master"] == True].copy()
 
-                # Aplicar filtro por Tienda en la Hoja 8
                 tiendas_m_opt = ["Todas las Tiendas"] + sorted([str(x) for x in df_m_only["Tienda"].dropna().unique() if str(x) != "nan"]) if "Tienda" in df_m_only.columns else ["Todas las Tiendas"]
                 col_tm_1, col_tm_2 = st.columns([2, 1])
                 with col_tm_1:
@@ -1897,5 +1932,41 @@ try:
             else:
                 st.info("ℹ️ No hay rectificaciones disponibles para auditar el error de facturación máster a nivel de líneas.")
 
+        # HOJA 8: GLOSARIO Y MODELO SLA
+        with tab8:
+            st.subheader("📖 Glosario Operativo y Modelo SLA")
+            st.markdown("Resumen ejecutivo de reglas de negocio, escalas de puntuación y definiciones de casuísticas aplicadas en el cálculo del SLA.")
+            
+            st.markdown("### 📋 Reglas de Puntaje y Evaluación SLA por Pedido")
+            
+            matriz_p = pd.DataFrame([
+                {"Casuística Operativa": "Pedido Perfecto", "Descuento Aplicado": "0.0 Pts", "Puntaje por Pedido": "10.0 / 10", "Simplificado": "Pedido sin rectificaciones"},
+                {"Casuística Operativa": "Sobrante Neto", "Descuento Aplicado": "0.0 Pts", "Puntaje por Pedido": "10.0 / 10", "Simplificado": "Pedido con rectificación de sobra"},
+                {"Casuística Operativa": "Sustitución Misma Subfamilia", "Descuento Aplicado": "-2.5 Pts", "Puntaje por Pedido": "7.5 / 10", "Simplificado": "Pedido con rectificación de falta y sobra en artículos de igual subfamilia"},
+                {"Casuística Operativa": "Sustitución Distinta Subfamilia", "Descuento Aplicado": "-4.5 Pts", "Puntaje por Pedido": "5.5 / 10", "Simplificado": "Pedido con rectificación de falta y sobra en artículos de distintas subfamilias"},
+                {"Casuística Operativa": "Falta/Sobra", "Descuento Aplicado": "-5.5 Pts", "Puntaje por Pedido": "4.5 / 10", "Simplificado": "Pedido con rectificación de falta y sobra"},
+                {"Casuística Operativa": "Faltante Neto", "Descuento Aplicado": "-6.0 Pts", "Puntaje por Pedido": "4.0 / 10", "Simplificado": "Pedido con rectificación de solo falta"},
+                {"Casuística Operativa": "Formato no entregado", "Descuento Aplicado": "-6.0 Pts", "Puntaje por Pedido": "4.0 / 10", "Simplificado": "Pedido con rectificación de solo falta de más de 10 líneas"},
+                {"Casuística Operativa": "Error facturación master", "Descuento Aplicado": "-6.0 Pts", "Puntaje por Pedido": "4.0 / 10", "Simplificado": "Pedido con rectificación de falta en bultos Master"},
+                {"Casuística Operativa": "Etiquetas Cambiadas", "Descuento Aplicado": "-10.0 Pts", "Puntaje por Pedido": "0.0 / 10", "Simplificado": "Faltas y sobras simultáneas mayores o iguales a 12 líneas rectificadas"}
+            ])
+            st.dataframe(matriz_p, hide_index=True)
+
+            st.markdown("---")
+            st.markdown("### 📚 Glosario de Conceptos y Siglas Operativas")
+            st.markdown("""
+* **SLA (Service Level Agreement)**: Nivel de servicio medido en escala de 1.0 a 10.0 puntos por pedido entregado.
+* **Procedencia 'G'**: Generado / detectado en Centro de Distribución (Almacén).
+* **Procedencia 'T'**: Registrado / detectado por la Tienda.
+* **Motivo 'F'**: Rectificación por Falta de mercadería.
+* **Motivo 'S'**: Rectificación por Sobra de mercadería.
+* **Estado 'M'**: Rectificación Confirmada.
+* **Estado 'P'**: Rectificación Pendiente.
+* **Estado 'R'**: Rectificación Rechazada / Anulada.
+* **UxB**: Unidades por Bulto / Caja estándar.
+* **BxM**: Bultos por Bulto Máster.
+* **UxM**: Unidades Totales por Bulto Máster ($UxM = UxB \times BxM$).
+            """)
+
 except Exception as e:
-    st.error(f"Error cargando el tablero: {e}")
+    st.error(f'Error cargando el tablero: {e}')
