@@ -502,9 +502,9 @@ try:
             "🏪 2. Detalle de Rectificaciones por Tienda",
             "🔄 3. Análisis de Sustituciones",
             "📦 4. Rectificaciones por Área de Salida",
-            "🧩 5. Análisis de Unidades Sueltas",
+            "🧩 5. Rectificaciones de Unidades Sueltas",
             "❌ 6. Rectificaciones del Portal",
-            "📦 7. Error Facturación Master (Líneas)",
+            "📦 7. Rectificaciones con Error de Facturación Master",
             "📖 8. Glosario"
         ])
 
@@ -1419,19 +1419,21 @@ try:
                 st.info("ℹ️ No hay rectificaciones registradas para el análisis por Área de Salida.")
 
         with tab5:
-            st.subheader("🧩 Análisis de Unidades Sueltas (Rectificaciones Menores a 1 Bulto Común - UxB)")
-            st.markdown("Auditoría independiente fuera de la clasificación de SLA para identificar aquellas **líneas rectificadas cuya cantidad enviada o reclamada es menor a un bulto cerrado** (`Unidades < UxB`). Permite auditar la incidencia de preparación por unidades sueltas por tienda y sector.")
+            st.subheader("🧩 Rectificaciones de Unidades Sueltas")
+            st.markdown("Análisis independiente fuera de la clasificación de SLA para identificar aquellas **líneas rectificadas cuya cantidad enviada o reclamada es menor a un bulto cerrado** (`Unidades < UxB`). Permite **controlar** la incidencia de preparación por unidades sueltas por tienda y sector.")
 
             if not df_rect.empty:
                 df_sueltas = df_rect.copy()
                 
-                # Excluir rectificaciones rechazadas 'R'
-                if "Estado" in df_sueltas.columns:
-                    df_sueltas = df_sueltas[df_sueltas["Estado"] != "R"].copy()
+                col_est_s = "Estado_Clean" if "Estado_Clean" in df_sueltas.columns else ("Estado" if "Estado" in df_sueltas.columns else None)
+                if col_est_s:
+                    df_sueltas["Estado_Norm"] = df_sueltas[col_est_s].astype(str).str.strip().str.upper()
+                else:
+                    df_sueltas["Estado_Norm"] = "M"
 
                 col_art_s = "Artículo" if "Artículo" in df_sueltas.columns else ("SKU" if "SKU" in df_sueltas.columns else "Producto")
                 
-                # Si 'Es_Unidad_Suelta' no viniera calculada desde el parquet, la calculamos dinámicamente
+                # Calcular flag de unidad suelta sobre la totalidad de líneas grabadas
                 if "Es_Unidad_Suelta" not in df_sueltas.columns:
                     col_unid_s = "Unidades_Num" if "Unidades_Num" in df_sueltas.columns else "Pedido"
                     col_uxb_s = "UxB" if "UxB" in df_sueltas.columns else None
@@ -1440,62 +1442,82 @@ try:
                     else:
                         df_sueltas["Es_Unidad_Suelta"] = False
 
-                # Filtrar solo las líneas de Unidades Sueltas
-                df_sueltas_only = df_sueltas[df_sueltas["Es_Unidad_Suelta"] == True].copy()
+                # Total de líneas de unidades sueltas (conserva R, M y P)
+                df_sueltas_all = df_sueltas[df_sueltas["Es_Unidad_Suelta"] == True].copy()
 
-                tot_lineas_sueltas = len(df_sueltas_only)
-                tot_pedidos_sueltas = df_sueltas_only["Pedido"].nunique() if not df_sueltas_only.empty else 0
-                tot_tiendas_sueltas = df_sueltas_only["Tienda"].nunique() if not df_sueltas_only.empty else 0
-                tot_monto_sueltas = df_sueltas_only["Monto_Rectif"].sum() if "Monto_Rectif" in df_sueltas_only.columns else 0.0
+                # Líneas de unidades sueltas confirmadas exclusivamente (Estado 'M') para los KPIs
+                df_sueltas_conf = df_sueltas_all[df_sueltas_all["Estado_Norm"] == "M"].copy()
+
+                tot_lineas_sueltas = len(df_sueltas_conf)
+                tot_pedidos_sueltas = df_sueltas_conf["Pedido"].nunique() if not df_sueltas_conf.empty else 0
+                tot_tiendas_sueltas = df_sueltas_conf["Tienda"].nunique() if not df_sueltas_conf.empty else 0
+                tot_monto_sueltas = df_sueltas_conf["Monto_Rectif"].sum() if "Monto_Rectif" in df_sueltas_conf.columns else 0.0
 
                 s1, s2, s3, s4 = st.columns(4)
-                s1.metric("🧩 Líneas de Unidades Sueltas", f"{tot_lineas_sueltas:,}")
-                s2.metric("📦 Pedidos Involucrados", f"{tot_pedidos_sueltas:,}")
-                s3.metric("🏪 Tiendas Afectadas", f"{tot_tiendas_sueltas:,}")
-                s4.metric("💰 Impacto Económico ($)", f"${tot_monto_sueltas:,.2f}")
+                s1.metric("🧩 Líneas de Unidades Sueltas", f"{tot_lineas_sueltas:,}", help="Total de líneas confirmadas con cantidad menor a un bulto cerrado (UxB)")
+                s2.metric("📦 Pedidos Involucrados", f"{tot_pedidos_sueltas:,}", help="Pedidos con rectificaciones confirmadas de unidades sueltas")
+                s3.metric("🏪 Tiendas Afectadas", f"{tot_tiendas_sueltas:,}", help="Cantidad de sucursales con rectificaciones confirmadas")
+                s4.metric("💰 Impacto Económico ($)", f"${tot_monto_sueltas:,.2f}", help="Monto acumulado correspondiente a rectificaciones confirmadas")
 
                 st.markdown("---")
 
-                if not df_sueltas_only.empty:
-                    st.markdown("### 🏆 Top 15 Tiendas con Mayor Cantidad de Líneas de Unidades Sueltas")
+                if not df_sueltas_all.empty:
+                    # TOP 15 TIENDAS CON MONTO CONFIRMADO Y % DE ACEPTACIÓN
+                    st.markdown(
+                        "### 🏆 Top 15 Tiendas con Mayor Cantidad de Líneas de Unidades Sueltas",
+                        help="El Monto Total refleja exclusivamente las rectificaciones confirmadas (Estado 'M'). El % de Aceptación representa la proporción de líneas confirmadas sobre el total de unidades sueltas grabadas por la tienda."
+                    )
 
-                    group_tienda_sueltas = df_sueltas_only.groupby("Tienda", as_index=False).agg(
-                        Líneas_Sueltas=("Pedido", "count"),
-                        Pedidos_Afectados=("Pedido", "nunique"),
-                        Unidades_Sueltas_Totales=("Unidades_Num", "sum") if "Unidades_Num" in df_sueltas_only.columns else ("Pedido", "count"),
-                        Monto_Total_Suelto=("Monto_Rectif", "sum") if "Monto_Rectif" in df_sueltas_only.columns else ("Pedido", "count")
-                    ).sort_values(by="Líneas_Sueltas", ascending=False).reset_index(drop=True)
+                    filas_top15_sueltas = []
+                    for t_val, grp_t in df_sueltas_all.groupby("Tienda"):
+                        tot_grab_t = len(grp_t)
+                        grp_conf_t = grp_t[grp_t["Estado_Norm"] == "M"]
+                        lin_conf_t = len(grp_conf_t)
+                        ped_conf_t = grp_conf_t["Pedido"].nunique()
+                        unid_conf_t = grp_conf_t["Unidades_Num"].sum() if "Unidades_Num" in grp_conf_t.columns else lin_conf_t
+                        monto_conf_t = grp_conf_t["Monto_Rectif"].sum() if "Monto_Rectif" in grp_conf_t.columns else 0.0
+                        pct_acep_t = (lin_conf_t / tot_grab_t * 100.0) if tot_grab_t > 0 else 100.0
 
-                    # Formato y visualización
-                    top15_sueltas = group_tienda_sueltas.head(15).copy()
+                        filas_top15_sueltas.append({
+                            "Tienda": t_val,
+                            "Lineas con Unidades sueltas": lin_conf_t,
+                            "Pedidos Afectados": ped_conf_t,
+                            "% Aceptación": pct_acep_t,
+                            "Unidades Sueltas Totales": unid_conf_t,
+                            "Monto Total ($)": monto_conf_t
+                        })
 
-                    cols_top_sueltas = ["Tienda", "Líneas_Sueltas", "Pedidos_Afectados", "Unidades_Sueltas_Totales", "Monto_Total_Suelto"]
-                    top15_sueltas_disp = top15_sueltas[cols_top_sueltas].rename(columns={
-                        "Líneas_Sueltas": "Lineas con Unidades sueltas",
-                        "Pedidos_Afectados": "Pedidos Afectados",
-                        "Unidades_Sueltas_Totales": "Unidades Sueltas Totales",
-                        "Monto_Total_Suelto": "Monto Total ($)"
-                    })
+                    df_top15_sueltas_disp = pd.DataFrame(filas_top15_sueltas).sort_values(
+                        by="Lineas con Unidades sueltas", ascending=False
+                    ).head(15).reset_index(drop=True)
 
                     st.dataframe(
-                        top15_sueltas_disp,
+                        df_top15_sueltas_disp[[
+                            "Tienda", "Lineas con Unidades sueltas", "Pedidos Afectados",
+                            "% Aceptación", "Unidades Sueltas Totales", "Monto Total ($)"
+                        ]],
                         hide_index=True,
                         column_config={
                             "Tienda": st.column_config.Column("Tienda", width="small"),
                             "Lineas con Unidades sueltas": st.column_config.NumberColumn("Lineas con Unidades sueltas", format="%d", width="medium"),
                             "Pedidos Afectados": st.column_config.NumberColumn("Pedidos Afectados", format="%d", width="medium"),
+                            "% Aceptación": st.column_config.NumberColumn("% Aceptación", format="%.1f %%", width="medium", help="Porcentaje de líneas confirmadas sobre el total grabado por la tienda"),
                             "Unidades Sueltas Totales": st.column_config.NumberColumn("Unidades Sueltas Totales", format="%.0f", width="medium"),
-                            "Monto Total ($)": st.column_config.NumberColumn("Monto Total ($)", format="$%.2f", width="medium")
+                            "Monto Total ($)": st.column_config.NumberColumn("Monto Total ($)", format="$%.2f", width="medium", help="Monto correspondiente a rectificaciones confirmadas (Estado 'M')")
                         }
                     )
 
                     st.markdown("---")
-                    st.markdown("### 🔎 Detalle Individual de Líneas Rectificadas como Unidades Sueltas")
+                    # DETALLE INDIVIDUAL CONSERVANDO ESTADOS R, M Y P
+                    st.markdown(
+                        "### 🔎 Detalle Individual de Líneas Rectificadas como Unidades Sueltas",
+                        help="Detalle completo de líneas de unidades sueltas incluyendo estados: M (Confirmada), P (Pendiente) y R (Rechazada)."
+                    )
 
-                    tiendas_sueltas_opt = ["Todas las Tiendas"] + sorted([str(x) for x in df_sueltas_only["Tienda"].unique()])
-                    t_suelta_sel = st.selectbox("Seleccionar Tienda para Auditar Unidades Sueltas:", tiendas_sueltas_opt, index=0)
+                    tiendas_sueltas_opt = ["Todas las Tiendas"] + sorted([str(x) for x in df_sueltas_all["Tienda"].dropna().unique() if str(x) != "nan"])
+                    t_suelta_sel = st.selectbox("Seleccionar Tienda para Controlar Unidades Sueltas:", tiendas_sueltas_opt, index=0)
 
-                    df_det_sueltas = df_sueltas_only.copy()
+                    df_det_sueltas = df_sueltas_all.copy()
                     if t_suelta_sel != "Todas las Tiendas":
                         df_det_sueltas = df_det_sueltas[df_det_sueltas["Tienda"].astype(str) == str(t_suelta_sel)]
 
@@ -1517,7 +1539,7 @@ try:
 
                     cols_sueltas_disp = [
                         "Almacen", "Tienda", "Pedido", "Area_Salida", col_art_s, col_desc_s, 
-                        "Unidades_Num", "UxB", "Motivo", "Procedencia", "Estado", "Monto_Signed"
+                        "Unidades_Num", "UxB", "Motivo", "Procedencia", "Estado_Norm", "Monto_Signed"
                     ]
                     cols_exist_s = [c for c in cols_sueltas_disp if c in df_det_sueltas.columns]
 
@@ -1529,6 +1551,7 @@ try:
                         col_desc_s: "Producto / Descripción",
                         "Unidades_Num": "Unid. Rectificadas",
                         "UxB": "Cant. por Bulto (UxB)",
+                        "Estado_Norm": "Estado (M/P/R)",
                         "Monto_Signed": "Monto ($)"
                     })
 
@@ -1547,16 +1570,15 @@ try:
                             "Cant. por Bulto (UxB)": st.column_config.NumberColumn("Cant. por Bulto (UxB)", format="%.0f", width="small"),
                             "Motivo": st.column_config.Column("Motivo", width="small"),
                             "Procedencia": st.column_config.Column("Procedencia", width="small"),
-                            "Estado": st.column_config.Column("Estado", width="small"),
+                            "Estado (M/P/R)": st.column_config.Column("Estado (M/P/R)", width="small", help="'M' = Confirmada | 'P' = Pendiente | 'R' = Rechazada"),
                             "Monto ($)": st.column_config.NumberColumn("Monto ($)", format="$%.2f", width="medium")
                         }
                     )
                 else:
                     st.success("🎉 No se registraron rectificaciones de unidades sueltas (< 1 UxB) para la selección actual.")
             else:
-                st.info("ℹ️ No hay rectificaciones disponibles para auditar unidades sueltas.")
+                st.info("ℹ️ No hay rectificaciones disponibles para controlar unidades sueltas.")
 
-        # HOJA 6: ANÁLISIS DE RECTIFICACIONES DE PORTAL
         with tab6:
             st.subheader("❌ Rectificaciones del Portal: Análisis de Causas Anuladas y Aprobadas \nRectificaciones Anuladas y Aprobadas")
             st.markdown("Analisis independiente fuera del cálculo del SLA basada exclusivamente en los datos del portal de rectificaciones. Esta vista procesa la totalidad de las rectificaciones Anuladas y Aprobadas, analizando sus motivos registrados y su distribución por Almacén, Área de Salida, Tienda y Mes.")
@@ -2012,17 +2034,19 @@ try:
 
 
         with tab7:
-            st.subheader("📦 Análisis de Líneas con Error de Facturación Master")
-            st.markdown("Auditoría enfocada exclusivamente a nivel **línea de artículo / SKU** para identificar todas aquellas rectificaciones que corresponden a desvíos de **Bulto Máster / Empaque**, independientemente de la clasificación SLA del pedido completo.")
+            st.subheader("📦 Rectificaciones con Error de Facturación Master")
+            st.markdown("Análisis enfocado exclusivamente a nivel **línea de artículo** para identificar todas aquellas rectificaciones confirmadas que corresponden a desvíos de **Bulto Máster**, independientemente de la clasificación SLA del pedido completo.")
 
             if not df_rect.empty:
                 df_m_lines = df_rect.copy()
 
-                # Excluir rectificaciones rechazadas 'R'
-                if "Estado" in df_m_lines.columns:
-                    df_m_lines = df_m_lines[df_m_lines["Estado"] != "R"].copy()
+                # Filtrar EXCLUSIVAMENTE rectificaciones confirmadas (Estado 'M')
+                col_est_tab7 = "Estado_Clean" if "Estado_Clean" in df_m_lines.columns else ("Estado" if "Estado" in df_m_lines.columns else None)
+                if col_est_tab7:
+                    df_m_lines = df_m_lines[df_m_lines[col_est_tab7].astype(str).str.strip().str.upper() == "M"].copy()
 
                 col_art_m = "Artículo" if "Artículo" in df_m_lines.columns else ("SKU" if "SKU" in df_m_lines.columns else "Producto")
+                col_desc_m = "Descripción" if "Descripción" in df_m_lines.columns else "Producto"
 
                 def es_linea_master_check(row):
                     sku = str(row.get(col_art_m, "")).strip().lstrip("0")
@@ -2062,43 +2086,65 @@ try:
                 tot_monto_m = df_m_only["Monto_Rectif"].sum() if "Monto_Rectif" in df_m_only.columns else 0.0
 
                 b1, b2, b3, b4 = st.columns(4)
-                b1.metric("📦 Líneas con Error Master", f"{tot_lineas_m:,}")
-                b2.metric("📋 Pedidos Involucrados", f"{tot_pedidos_m:,}")
-                b3.metric("🏪 Tiendas Afectadas", f"{tot_tiendas_m:,}")
-                b4.metric("💰 Impacto Económico ($)", f"${tot_monto_m:,.2f}")
+                b1.metric("📦 Líneas con Error Master", f"{tot_lineas_m:,}", help="Total de líneas confirmadas con error en bulto máster")
+                b2.metric("📋 Pedidos Involucrados", f"{tot_pedidos_m:,}", help="Pedidos con rectificaciones confirmadas por error máster")
+                b3.metric("🏪 Tiendas Afectadas", f"{tot_tiendas_m:,}", help="Cantidad de sucursales con rectificaciones confirmadas")
+                b4.metric("💰 Impacto Económico ($)", f"${tot_monto_m:,.2f}", help="Monto acumulado de las rectificaciones confirmadas")
 
                 st.markdown("---")
 
                 if not df_m_only.empty:
-                    st.markdown("### 🏆 Top 15 Tiendas con Mayor Cantidad de Líneas con Error Master")
+                    st.markdown("### 🏆 Top de Artículos con Mayor Cantidad de Líneas Rectificadas")
+                    st.caption("Detalle de artículos con cantidad total de líneas rectificadas confirmadas y desglose de líneas por cada almacén.")
 
-                    group_tienda_m = df_m_only.groupby("Tienda", as_index=False).agg(
-                        Líneas_Master=("Pedido", "count"),
-                        Pedidos_Afectados=("Pedido", "nunique"),
-                        Unidades_Master_Totales=("Unidades_Num", "sum") if "Unidades_Num" in df_m_only.columns else ("Pedido", "count"),
-                        Monto_Total_Master=("Monto_Rectif", "sum") if "Monto_Rectif" in df_m_only.columns else ("Pedido", "count")
-                    ).sort_values(by="Líneas_Master", ascending=False).reset_index(drop=True)
+                    # Agrupación base por Artículo
+                    base_art = df_m_only.groupby([col_art_m, col_desc_m], as_index=False).agg(
+                        Líneas_Totales=("Pedido", "count"),
+                        Unidades_Totales=("Unidades_Num", "sum") if "Unidades_Num" in df_m_only.columns else ("Pedido", "count"),
+                        Monto_Total=("Monto_Rectif", "sum") if "Monto_Rectif" in df_m_only.columns else ("Pedido", "count")
+                    )
 
-                    top15_m = group_tienda_m.head(15).copy()
+                    # Desglose de cantidad de líneas por Almacén
+                    alm_cols = sorted([str(x) for x in df_m_only["Almacen"].dropna().unique() if str(x) != "nan"])
+                    if alm_cols:
+                        pv_alm = df_m_only.pivot_table(
+                            index=[col_art_m, col_desc_m],
+                            columns="Almacen",
+                            values="Pedido",
+                            aggfunc="count",
+                            fill_value=0
+                        )
+                        pv_alm.columns = [f"Alm. {c}" for c in pv_alm.columns]
+                        pv_alm = pv_alm.reset_index()
+                        tb_art_resumen = base_art.merge(pv_alm, on=[col_art_m, col_desc_m], how="left")
+                    else:
+                        tb_art_resumen = base_art
 
-                    cols_top_m = ["Tienda", "Líneas_Master", "Pedidos_Afectados", "Unidades_Master_Totales", "Monto_Total_Master"]
-                    top15_m_disp = top15_m[cols_top_m].rename(columns={
-                        "Líneas_Master": "Líneas Error Master",
-                        "Pedidos_Afectados": "Pedidos Afectados",
-                        "Unidades_Master_Totales": "Unidades Totales",
-                        "Monto_Total_Master": "Monto Total ($)"
+                    tb_art_resumen = tb_art_resumen.sort_values(by="Líneas_Totales", ascending=False).reset_index(drop=True)
+
+                    tb_art_disp = tb_art_resumen.rename(columns={
+                        col_art_m: "SKU",
+                        col_desc_m: "Descripción del Artículo",
+                        "Líneas_Totales": "Líneas Rectificadas",
+                        "Unidades_Totales": "Unidades Totales",
+                        "Monto_Total": "Monto Total ($)"
                     })
 
+                    # Construir configuración dinámica de columnas
+                    col_config_top_art = {
+                        "SKU": st.column_config.Column("SKU", width="small"),
+                        "Descripción del Artículo": st.column_config.Column("Descripción del Artículo", width="large"),
+                        "Líneas Rectificadas": st.column_config.NumberColumn("Líneas Rectif.", format="%d", width="small"),
+                        "Unidades Totales": st.column_config.NumberColumn("Unidades Totales", format="%.0f", width="small"),
+                        "Monto Total ($)": st.column_config.NumberColumn("Monto Total ($)", format="$%.2f", width="medium")
+                    }
+                    for alm_name in alm_cols:
+                        col_config_top_art[f"Alm. {alm_name}"] = st.column_config.NumberColumn(f"Alm. {alm_name}", format="%d", width="small")
+
                     st.dataframe(
-                        top15_m_disp,
+                        tb_art_disp,
                         hide_index=True,
-                        column_config={
-                            "Tienda": st.column_config.Column("Tienda", width="small"),
-                            "Líneas Error Master": st.column_config.NumberColumn("Líneas Error Master", format="%d", width="medium"),
-                            "Pedidos Afectados": st.column_config.NumberColumn("Pedidos Afectados", format="%d", width="medium"),
-                            "Unidades Totales": st.column_config.NumberColumn("Unidades Totales", format="%.0f", width="medium"),
-                            "Monto Total ($)": st.column_config.NumberColumn("Monto Total ($)", format="$%.2f", width="medium")
-                        }
+                        column_config=col_config_top_art
                     )
 
                     st.markdown("---")
@@ -2110,8 +2156,6 @@ try:
                         df_det_m = df_det_m[
                             df_det_m["Pedido"].astype(str).str.contains(busqueda_ped_m.strip(), case=False, na=False)
                         ]
-
-                    col_desc_m = "Descripción" if "Descripción" in df_det_m.columns else "Producto"
 
                     cols_m_disp = [
                         "Almacen", "Tienda", "Pedido", "Area_Salida", col_art_m, col_desc_m, 
@@ -2152,6 +2196,7 @@ try:
                             "Producto / Descripción": st.column_config.Column("Producto / Descripción", width="large"),
                             "UxB": st.column_config.NumberColumn("UxB", format="%.0f", width="small"),
                             "BxM": st.column_config.NumberColumn("BxM", format="%.0f", width="small"),
+                            "Master": st.column_config.Column("Master", width="small"),
                             "Unid. Rectificadas": st.column_config.NumberColumn("Unid. Rectificadas", format="%.0f", width="small"),
                             "Motivo": st.column_config.Column("Motivo", width="small"),
                             "Procedencia": st.column_config.Column("Procedencia", width="small"),
@@ -2160,11 +2205,10 @@ try:
                         }
                     )
                 else:
-                    st.success("🎉 No se registraron líneas de rectificación con Error Facturación Master para la selección realizada.")
+                    st.success("🎉 No se registraron líneas de rectificación confirmadas con Error Facturación Master para la selección realizada.")
             else:
-                st.info("ℹ️ No hay rectificaciones disponibles para auditar el error de facturación máster a nivel de líneas.")
+                st.info("ℹ️ No hay rectificaciones confirmadas disponibles para analizar el error de facturación máster.")
 
-        # HOJA 8: GLOSARIO Y MODELO SLA
         with tab8:
             st.subheader("📖 Glosario Operativo y Modelo SLA")
             st.markdown("Resumen ejecutivo de reglas de negocio, escalas de puntuación y definiciones de casuísticas aplicadas en el cálculo del SLA.")
