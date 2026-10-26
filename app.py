@@ -253,6 +253,88 @@ def cargar_datos_anulaciones(df_sla=None, df_rect=None):
 
     return df_a
 
+
+@st.cache_data(show_spinner=False)
+def procesar_analisis_sustituciones_cache(_df_sla, _df_rect):
+    if _df_sla.empty or _df_rect.empty:
+        return pd.DataFrame()
+
+    df_sust_cas = _df_sla[_df_sla["Casuistica"].isin(["Sustitución Misma Subfamilia", "Sustitución Distinta Subfamilia"])].copy()
+    if df_sust_cas.empty:
+        return pd.DataFrame()
+
+    mapa_cas_pedido = df_sust_cas.set_index("Pedido")["Casuistica"].to_dict()
+    pedidos_sust_todos = set(df_sust_cas["Pedido"].dropna().unique())
+
+    df_r_sust = _df_rect[
+        (_df_rect["Pedido"].isin(pedidos_sust_todos)) & 
+        (_df_rect["Procedencia"].astype(str).str.strip().str.upper() == "T")
+    ].copy()
+    
+    if df_r_sust.empty:
+        return pd.DataFrame()
+
+    col_motivo_s = "Motivo_Clean" if "Motivo_Clean" in df_r_sust.columns else ("Motivo" if "Motivo" in df_r_sust.columns else None)
+    df_r_sust["Motivo_Norm"] = df_r_sust[col_motivo_s].astype(str).str.strip().str.upper() if col_motivo_s else "F"
+    df_r_sust["Estado_Norm"] = df_r_sust["Estado"].astype(str).str.strip().str.upper() if "Estado" in df_r_sust.columns else "M"
+
+    col_art_lbl = "Artículo" if "Artículo" in df_r_sust.columns else ("SKU" if "SKU" in df_r_sust.columns else "Producto")
+    col_desc_lbl = "Descripción" if "Descripción" in df_r_sust.columns else "Producto"
+
+    filas_comparativas = []
+    for ped, grp in df_r_sust.groupby("Pedido"):
+        casuistica_ped = mapa_cas_pedido.get(ped, "Sustitución")
+        f_items = grp[grp["Motivo_Norm"] == "F"].sort_values(by="Monto_Rectif", ascending=False).reset_index(drop=True)
+        s_items = grp[grp["Motivo_Norm"] == "S"].sort_values(by="Monto_Rectif", ascending=False).reset_index(drop=True)
+
+        if not f_items.empty and not s_items.empty:
+            tienda_val = grp["Tienda"].iloc[0] if "Tienda" in grp.columns else "—"
+            almacen_val = grp["Almacen"].iloc[0] if "Almacen" in grp.columns else "501"
+            area_salida_val = grp["Area_Salida"].iloc[0] if "Area_Salida" in grp.columns else "Sin Clasificar"
+
+            max_pairs = max(len(f_items), len(s_items))
+            for i in range(max_pairs):
+                if i < len(f_items):
+                    row_f = f_items.iloc[i]
+                    sku_f = str(row_f[col_art_lbl])
+                    desc_f = str(row_f[col_desc_lbl]) if col_desc_lbl in row_f else sku_f
+                    monto_f = float(row_f["Monto_Rectif"])
+                    est_f = str(row_f["Estado_Norm"])
+                else:
+                    sku_f, desc_f, monto_f, est_f = "—", "—", 0.0, "—"
+
+                if i < len(s_items):
+                    row_s = s_items.iloc[i]
+                    sku_s = str(row_s[col_art_lbl])
+                    desc_s = str(row_s[col_desc_lbl]) if col_desc_lbl in row_s else sku_s
+                    monto_s = float(row_s["Monto_Rectif"])
+                    est_s = str(row_s["Estado_Norm"])
+                else:
+                    sku_s, desc_s, monto_s, est_s = "—", "—", 0.0, "—"
+
+                dif_neto = monto_f - monto_s
+                monto_conf = (monto_f if est_f == "M" else 0.0) - (monto_s if est_s == "M" else 0.0)
+
+                filas_comparativas.append({
+                    "Almacén": almacen_val,
+                    "Tienda": tienda_val,
+                    "Pedido": ped,
+                    "Tipo Sustitución": casuistica_ped,
+                    "Área de Salida": area_salida_val,
+                    "SKU Faltante": sku_f,
+                    "Producto Faltante": desc_f,
+                    "Monto Faltante ($)": monto_f,
+                    "Estado Falta": est_f,
+                    "SKU Sobrante": sku_s,
+                    "Producto Sobrante": desc_s,
+                    "Monto Sobrante ($)": monto_s,
+                    "Estado Sobra": est_s,
+                    "Diferencia Monto Neto ($)": dif_neto,
+                    "Diferencia Neta Confirmada ($)": monto_conf
+                })
+
+    return pd.DataFrame(filas_comparativas)
+
 try:
     df_sla, df_rect = cargar_datos_sla()
     df_anul = cargar_datos_anulaciones(df_sla, df_rect)
@@ -614,7 +696,7 @@ try:
                         marker_color=colores_cas.get(cas, "#999999"), 
                         text=df_c["Etiqueta_Barra"], 
                         textposition="inside",
-                        hoverinfo="x+y+name"
+                        hovertemplate="<b>%{data.name}</b><br>Pedidos: %{y:,}<extra></extra>"
                     ), secondary_y=False)
 
             fig_comb.add_trace(go.Scatter(
@@ -625,11 +707,13 @@ try:
                 line=dict(color="#00B4D8", width=4.0), 
                 marker=dict(size=10, color="#03045E"), 
                 text=[f"{int(x):,}" for x in df_lineas_mes["Cant_Lineas_Rectificadas"]], 
-                textposition="top center"
+                textposition="top center",
+                hovertemplate="<b>Líneas Rectificadas</b>: %{y:,}<extra></extra>"
             ), secondary_y=True)
 
             fig_comb.update_layout(
-                barmode="stack", height=430, 
+                barmode="stack", height=430,
+                hovermode="closest",
                 paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", 
                 legend=dict(orientation="h", y=-0.25, x=0.5, xanchor="center"),
                 xaxis=dict(
@@ -996,83 +1080,15 @@ try:
             st.subheader("🔄 Análisis de Sustituciones")
             st.markdown("Análisis de rectificaciones con casuística de sustitución misma y diferente familia grabadas por la tienda para evaluar el impacto monetario.")
 
-            df_sust_cas = df_sla[df_sla["Casuistica"].isin(["Sustitución Misma Subfamilia", "Sustitución Distinta Subfamilia"])].copy()
-            mapa_cas_pedido = df_sust_cas.set_index("Pedido")["Casuistica"].to_dict()
-            pedidos_sust_todos = set(df_sust_cas["Pedido"].dropna().unique())
+            df_sust_analisis_completo = procesar_analisis_sustituciones_cache(df_sla, df_rect)
 
-            if not df_rect.empty and pedidos_sust_todos:
-                df_r_sust = df_rect[
-                    (df_rect["Pedido"].isin(pedidos_sust_todos)) & 
-                    (df_rect["Procedencia"].astype(str).str.strip().str.upper() == "T")
-                ].copy()
-                
-                col_motivo_s = "Motivo_Clean" if "Motivo_Clean" in df_r_sust.columns else ("Motivo" if "Motivo" in df_r_sust.columns else None)
-                if col_motivo_s:
-                    df_r_sust["Motivo_Norm"] = df_r_sust[col_motivo_s].astype(str).str.strip().str.upper()
-                else:
-                    df_r_sust["Motivo_Norm"] = "F"
+            if not df_sust_analisis_completo.empty:
+                pedidos_sla_activos = set(df_sla["Pedido"].dropna().unique())
+                df_sust_analisis = df_sust_analisis_completo[df_sust_analisis_completo["Pedido"].isin(pedidos_sla_activos)].copy()
+            else:
+                df_sust_analisis = pd.DataFrame()
 
-                df_r_sust["Estado_Norm"] = df_r_sust["Estado"].astype(str).str.strip().str.upper() if "Estado" in df_r_sust.columns else "M"
-
-                col_art_lbl = "Artículo" if "Artículo" in df_r_sust.columns else ("SKU" if "SKU" in df_r_sust.columns else "Producto")
-                col_desc_lbl = "Descripción" if "Descripción" in df_r_sust.columns else "Producto"
-
-                filas_comparativas = []
-
-                for ped, grp in df_r_sust.groupby("Pedido"):
-                    casuistica_ped = mapa_cas_pedido.get(ped, "Sustitución")
-                    f_items = grp[grp["Motivo_Norm"] == "F"].sort_values(by="Monto_Rectif", ascending=False).reset_index(drop=True)
-                    s_items = grp[grp["Motivo_Norm"] == "S"].sort_values(by="Monto_Rectif", ascending=False).reset_index(drop=True)
-
-                    if not f_items.empty and not s_items.empty:
-                        tienda_val = grp["Tienda"].iloc[0] if "Tienda" in grp.columns else "—"
-                        almacen_val = grp["Almacen"].iloc[0] if "Almacen" in grp.columns else "501"
-                        area_salida_val = grp["Area_Salida"].iloc[0] if "Area_Salida" in grp.columns else "Sin Clasificar"
-
-                        max_pairs = max(len(f_items), len(s_items))
-
-                        for i in range(max_pairs):
-                            if i < len(f_items):
-                                row_f = f_items.iloc[i]
-                                sku_f = str(row_f[col_art_lbl])
-                                desc_f = str(row_f[col_desc_lbl]) if col_desc_lbl in row_f else sku_f
-                                monto_f = float(row_f["Monto_Rectif"])
-                                est_f = str(row_f["Estado_Norm"])
-                            else:
-                                sku_f, desc_f, monto_f, est_f = "—", "—", 0.0, "—"
-
-                            if i < len(s_items):
-                                row_s = s_items.iloc[i]
-                                sku_s = str(row_s[col_art_lbl])
-                                desc_s = str(row_s[col_desc_lbl]) if col_desc_lbl in row_s else sku_s
-                                monto_s = float(row_s["Monto_Rectif"])
-                                est_s = str(row_s["Estado_Norm"])
-                            else:
-                                sku_s, desc_s, monto_s, est_s = "—", "—", 0.0, "—"
-
-                            dif_neto = monto_f - monto_s
-                            monto_conf = (monto_f if est_f == "M" else 0.0) - (monto_s if est_s == "M" else 0.0)
-
-                            filas_comparativas.append({
-                                "Almacén": almacen_val,
-                                "Tienda": tienda_val,
-                                "Pedido": ped,
-                                "Tipo Sustitución": casuistica_ped,
-                                "Área de Salida": area_salida_val,
-                                "SKU Faltante": sku_f,
-                                "Producto Faltante": desc_f,
-                                "Monto Faltante ($)": monto_f,
-                                "Estado Falta": est_f,
-                                "SKU Sobrante": sku_s,
-                                "Producto Sobrante": desc_s,
-                                "Monto Sobrante ($)": monto_s,
-                                "Estado Sobra": est_s,
-                                "Diferencia Monto Neto ($)": dif_neto,
-                                "Diferencia Neta Confirmada ($)": monto_conf
-                            })
-
-                if filas_comparativas:
-                    df_sust_analisis = pd.DataFrame(filas_comparativas)
+            if not df_sust_analisis.empty:
 
                     # 1. MOSTRAR VALOR TOTAL GENERAL (SIN FILTRAR POR ESTADO)
                     tot_pedidos_sust_all = int(df_sust_analisis["Pedido"].nunique())
