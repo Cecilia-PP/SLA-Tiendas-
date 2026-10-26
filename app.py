@@ -499,7 +499,7 @@ try:
 
         tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
             "📊 1. Ranking SLA por Almacén y Tienda",
-            "🏪 2. Auditoría Práctica por Tienda",
+            "🏪 2. Detalle de Rectificaciones por Tienda",
             "🔄 3. Análisis de Sustituciones",
             "📦 4. Rectificaciones por Área de Salida",
             "🧩 5. Análisis de Unidades Sueltas",
@@ -656,15 +656,16 @@ try:
 
             st.markdown("---")
             st.markdown("### 📈 Distribución de rectificaciones por casuística")
-            tot_p = len(df_sla)
-            df_sla_tab1_cas = df_sla.copy()
+            # Excluir Pedido Perfecto para analizar exclusivamente la distribución de pedidos rectificados
+            df_sla_tab1_cas = df_sla[df_sla["Casuistica"].astype(str).str.strip() != "Pedido Perfecto"].copy()
             df_sla_tab1_cas["Casuistica"] = df_sla_tab1_cas["Casuistica"].astype(str).str.strip()
+            tot_p_rect = len(df_sla_tab1_cas)
 
             cas_sum = df_sla_tab1_cas.groupby("Casuistica", as_index=False).agg(
                 Pedidos_Totales=("Pedido", "count"), 
                 Lineas_Rectificadas=("Lineas_Rectificadas_Confirmadas", "sum") if "Lineas_Rectificadas_Confirmadas" in df_sla_tab1_cas.columns else ("Pedido", "count")
             )
-            cas_sum["% Participación Pedidos"] = (cas_sum["Pedidos_Totales"] / tot_p) * 100.0 if tot_p > 0 else 0.0
+            cas_sum["% Participación Pedidos"] = (cas_sum["Pedidos_Totales"] / tot_p_rect) * 100.0 if tot_p_rect > 0 else 0.0
 
             # CALCULAR EL % DE ACEPTACIÓN (Líneas Confirmadas M / Líneas Grabadas Totales) POR CASUÍSTICA
             if not df_rect.empty and "Pedido" in df_rect.columns:
@@ -682,12 +683,11 @@ try:
                 mapa_acep = grp_acep.set_index("Casuistica_Mapped")["% Aceptación"].to_dict()
 
                 cas_sum["% Aceptación"] = cas_sum["Casuistica"].map(mapa_acep).fillna(0.0)
-                cas_sum.loc[cas_sum["Casuistica"] == "Pedido Perfecto", "% Aceptación"] = 100.0
             else:
                 cas_sum["% Aceptación"] = 100.0
 
             orden_cas = [
-                "Pedido Perfecto", "Sobrante Neto", 
+                "Sobrante Neto", 
                 "Sustitución Misma Subfamilia", "Sustitución Distinta Subfamilia", 
                 "Falta/Sobra", "Faltante Neto", "Formato no entregado", "Error facturación master", 
                 "Etiquetas Cambiadas"
@@ -717,15 +717,15 @@ try:
 
 
         with tab2:
-                st.subheader("🏪 Auditoría Práctica y Detalle de Rectificaciones por Tienda")
-                st.markdown("Auditoría ejecutiva por sucursal para evaluar el nivel de aceptación de reclamos, distribución de estados (M/P/R), impacto económico y desgloses por casuística.")
+                st.subheader("🏪 Detalle de Rectificaciones por Tienda")
+                st.markdown("Detalle consolidado por sucursal para evaluar el nivel de aceptación de rectificaciones, distribución de estados (M/P/R), impacto económico y desgloses por casuística.")
     
                 tiendas_unicas = sorted([str(x) for x in df_sla["Tienda"].dropna().unique() if str(x) != "nan"])
                 opciones_tienda = ["Ninguna", "Todas las Tiendas"] + tiendas_unicas
                 
                 c_tienda, c_cas = st.columns([2, 2])
                 with c_tienda:
-                    t_sel = st.selectbox("Seleccionar Tienda a Auditar:", opciones_tienda, index=0)
+                    t_sel = st.selectbox("Seleccionar Tienda a Consultar:", opciones_tienda, index=0)
                 
                 orden_cas_tab2 = [
                     "Todas las Casuísticas",
@@ -740,7 +740,7 @@ try:
                     cas_sel_tab2 = st.selectbox("Filtrar por Casuística / Estado Pedido:", casuisticas_presentes_tab2, index=0)
     
                 if t_sel == "Ninguna":
-                    st.info("👈 Selecciona una **Tienda** específica o la opción **'Todas las Tiendas'** para desplegar el resumen ejecutivo y auditoría detallada.")
+                    st.info("👈 Selecciona una **Tienda** específica o la opción **'Todas las Tiendas'** para desplegar el resumen consolidado y detalle de rectificaciones.")
                 else:
                     # 1. Filtrado de datos por Tienda
                     if t_sel == "Todas las Tiendas":
@@ -788,17 +788,17 @@ try:
                     k1, k2, k3, k4, k5 = st.columns(5)
                     k1.metric("⭐ Puntaje SLA Tienda", f"{nota_sla_t:.2f} / 10.0")
                     k2.metric("📦 Pedidos Recibidos", f"{tot_p_t:,}")
-                    k3.metric("📉 Líneas Reclamadas", f"{tot_lineas_grabadas:,}")
-                    k4.metric("✅ % Aceptación Reclamos", f"{pct_aceptacion:.1f}%", help="Proporción de líneas confirmadas 'M' sobre el total reclamado por la tienda")
-                    k5.metric("💰 Monto Confirmado Pagado", f"${monto_confirmado_tot:,.0f}", delta=f"de ${monto_grabado_tot:,.0f} Reclamados")
+                    k3.metric("📉 Líneas Rectificadas", f"{tot_lineas_grabadas:,}")
+                    k4.metric("✅ % Aceptación", f"{pct_aceptacion:.1f}%", help="Proporción de líneas confirmadas 'M' sobre el total rectificado por la tienda")
+                    k5.metric("💰 Monto Confirmado", f"${monto_confirmado_tot:,.0f}", delta=f"de ${monto_grabado_tot:,.0f} Rectificados")
     
                     st.markdown("---")
     
                     # REGLA 1 & 2 & 3: TARJETAS DE DESGROSE DE ESTADOS DE RECTIFICACIÓN
                     st.markdown("### 📊 Desglose de Estados de Rectificación e Impacto Monetario")
                     e1, e2, e3 = st.columns(3)
-                    e1.metric("✅ Confirmadas / Aprobadas (Estado M)", f"{lin_m:,}", help="Líneas aceptadas por auditoría")
-                    e2.metric("❌ Rechazadas / Anuladas (Estado R)", f"{lin_r:,}", help="Líneas desestimadas")
+                    e1.metric("✅ Confirmadas / Aprobadas (Estado M)", f"{lin_m:,}", help="Líneas confirmadas y aceptadas")
+                    e2.metric("❌ Rechazadas / Anuladas (Estado R)", f"{lin_r:,}", help="Líneas rechazadas")
                     e3.metric("⏳ Pendientes (Estado P)", f"{lin_p:,}", help="Líneas en proceso de evaluación")
     
                     st.markdown("---")
@@ -865,7 +865,7 @@ try:
                             "Tienda": "Tienda",
                             "Pedido": "Pedido Rectificado",
                             "Líneas Totales": "Líneas Totales",
-                            "Casuistica": "Casuística Obtenida",
+                            "Casuistica": "Casuística",
                             "Puntos_Obtenidos": "Puntaje SLA (0-10)"
                         })
     
@@ -876,7 +876,7 @@ try:
                                 "Tienda": st.column_config.NumberColumn("Tienda", format="%d", width="small"),
                                 "Pedido Rectificado": st.column_config.Column("Pedido Rectificado", width="medium"),
                                 "Líneas Totales": st.column_config.NumberColumn("Líneas Totales", format="%d", width="small"),
-                                "Casuística Obtenida": st.column_config.Column("Casuística Obtenida", width="large"),
+                                "Casuística": st.column_config.Column("Casuística", width="large"),
                                 "Líneas Faltantes": st.column_config.NumberColumn("Líneas Faltantes (F)", format="%d", width="small"),
                                 "Líneas Sobrantes": st.column_config.NumberColumn("Líneas Sobrantes (S)", format="%d", width="small"),
                                 "Master No": st.column_config.NumberColumn("Master No", format="%d", width="small"),
@@ -892,15 +892,15 @@ try:
                     st.markdown("---")
                     glosario_txt = """GLOSARIO OPERATIVO:
     1. Procedencia:
-       • 'G' = CD / Almacén (Detectado en centro de distribución)
-       • 'T' = Tienda (Registrado por la sucursal)
+       • 'T' = Grabada por tienda
+       • 'G' = Grabada por CD
     2. Motivo:
        • 'F' = Falta (Faltante de mercadería)
        • 'S' = Sobra (Sobrante de mercadería)
     3. Estado:
-       • 'M' = Confirmada / Aprobada
-       • 'P' = Pendiente de auditoría
-       • 'R' = Rechazada / Anulada"""
+       • 'M' = Confirmada
+       • 'P' = Rectificación pendiente
+       • 'R' = Rechazada"""
     
                     st.subheader("🔎 Detalle de Rectificaciones Registradas (Líneas de SKUs)", help=glosario_txt)
     
@@ -1007,7 +1007,7 @@ try:
 
         with tab3:
             st.subheader("🔄 Análisis de Sustituciones")
-            st.markdown("Revisión de rectificaciones con casuística de sustitución grabadas por la tienda para evaluar el impacto monetario.")
+            st.markdown("Análisis de rectificaciones con casuística de sustitución misma y diferente familia grabadas por la tienda para evaluar el impacto monetario.")
 
             df_sust_cas = df_sla[df_sla["Casuistica"].isin(["Sustitución Misma Subfamilia", "Sustitución Distinta Subfamilia"])].copy()
             mapa_cas_pedido = df_sust_cas.set_index("Pedido")["Casuistica"].to_dict()
@@ -1098,7 +1098,7 @@ try:
                     k1_s.metric("📦 Total Pedidos Sustitución", f"{tot_pedidos_sust_all:,}")
                     k2_s.metric("💸 Importe Faltante ($)", f"${tot_monto_falta_bruto:,.0f}")
                     k3_s.metric("💰 Importe Sobrante ($)", f"${tot_monto_sobra_bruto:,.0f}")
-                    k4_s.metric("⚖️ Diferencia Monto Neto ($)", f"${tot_diferencia_bruta:,.0f}", help="Balance de Revisión: Monto Faltante - Monto Sobrante")
+                    k4_s.metric("⚖️ Diferencia Monto Neto ($)", f"${tot_diferencia_bruta:,.0f}", help="Balance monetario: Monto Faltante - Monto Sobrante")
 
                     st.markdown("---")
 
@@ -1111,50 +1111,59 @@ try:
 
                     monto_conf_neto = df_sust_analisis["Diferencia Neta Confirmada ($)"].sum()
 
-                    st.markdown("### 🎯 2. Montos Confirmados y Nivel de Aceptación de la Tienda")
+                    st.markdown("### 🎯 Montos Confirmados y Nivel de Aceptación de la Tienda")
                     c_conf1, c_conf2, c_conf3 = st.columns(3)
-                    c_conf1.metric("✅ Monto Confirmado Neto ($)", f"${monto_conf_neto:,.0f}", help="Importe efectivamente aprobado tras revisión")
+                    c_conf1.metric("✅ Monto Confirmado Neto ($)", f"${monto_conf_neto:,.0f}", help="Importe efectivamente aprobado y confirmado")
                     c_conf2.metric("🎯 % Aceptación Rectificaciones", f"{pct_acep_sust:.1f}%")
                     c_conf3.metric("❌ Tasa de Rechazo", f"{100.0 - pct_acep_sust:.1f}%")
 
                     st.markdown("---")
-                    st.markdown("### 🏪 Resumen por Tienda de Pedidos con Sustituciones")
+                    st.markdown("### 🏪 Resumen de Pedidos con Sustituciones por Tienda", help="La Diferencia Monto Neto refleja exclusivamente el importe de rectificaciones confirmadas (Estado 'M'). El % a Favor indica la proporción de pedidos donde el faltante superó al sobrante rectificado.")
 
-                    def calc_pct_acep_tienda(grp):
-                        lin_m = (grp["Estado Falta"] == "M").sum() + (grp["Estado Sobra"] == "M").sum()
-                        tot_lin = len(grp) * 2
-                        return (lin_m / tot_lin * 100.0) if tot_lin > 0 else 100.0
+                    filas_tienda_resumen = []
+                    for t_val, grp_t in df_sust_analisis.groupby("Tienda"):
+                        tot_ped_t = grp_t["Pedido"].nunique()
+                        lin_m_t = (grp_t["Estado Falta"] == "M").sum() + (grp_t["Estado Sobra"] == "M").sum()
+                        tot_lin_t = len(grp_t) * 2
+                        pct_acep_t = (lin_m_t / tot_lin_t * 100.0) if tot_lin_t > 0 else 100.0
+                        
+                        # Cálculo de la diferencia monto neto con rectificaciones confirmadas
+                        monto_neto_conf_t = grp_t["Diferencia Neta Confirmada ($)"].sum()
+                        
+                        # % de pedidos con diferencia confirmada a favor de la tienda (> 0)
+                        ped_netos_t = grp_t.groupby("Pedido")["Diferencia Neta Confirmada ($)"].sum()
+                        ped_a_favor_t = (ped_netos_t > 0).sum()
+                        pct_favor_t = (ped_a_favor_t / tot_ped_t * 100.0) if tot_ped_t > 0 else 0.0
+                        
+                        monto_falta_conf_t = grp_t[grp_t["Estado Falta"] == "M"]["Monto Faltante ($)"].sum()
+                        monto_sobra_conf_t = grp_t[grp_t["Estado Sobra"] == "M"]["Monto Sobrante ($)"].sum()
+                        
+                        filas_tienda_resumen.append({
+                            "Tienda": t_val,
+                            "Pedidos": tot_ped_t,
+                            "% Aceptación": pct_acep_t,
+                            "% a Favor de Tienda": pct_favor_t,
+                            "Monto Falta Conf. ($)": monto_falta_conf_t,
+                            "Monto Sobra Conf. ($)": monto_sobra_conf_t,
+                            "Diferencia Monto Neto ($)": monto_neto_conf_t
+                        })
 
-                    tb_todas_tiendas = df_sust_analisis.groupby("Tienda", as_index=False).apply(
-                        lambda g: pd.Series({
-                            "Pedidos_Afectados": g["Pedido"].nunique(),
-                            "Pct_Aceptacion": calc_pct_acep_tienda(g),
-                            "Monto_Falta": g["Monto Faltante ($)"].sum(),
-                            "Monto_Sobra": g["Monto Sobrante ($)"].sum(),
-                            "Diferencia_Total_Valor": g["Diferencia Monto Neto ($)"].sum()
-                        }),
-                        include_groups=False
-                    ).sort_values(by="Pedidos_Afectados", ascending=False).reset_index(drop=True)
-
-                    tb_todas_tiendas_disp = tb_todas_tiendas.rename(columns={
-                        "Tienda": "Tienda",
-                        "Pedidos_Afectados": "Pedidos",
-                        "Pct_Aceptacion": "% Aceptación",
-                        "Monto_Falta": "Monto Falta ($)",
-                        "Monto_Sobra": "Monto Sobra ($)",
-                        "Diferencia_Total_Valor": "Diferencia Monto Neto ($)"
-                    })
+                    tb_todas_tiendas_disp = pd.DataFrame(filas_tienda_resumen).sort_values(by="Pedidos", ascending=False).reset_index(drop=True)
 
                     st.dataframe(
-                        tb_todas_tiendas_disp[["Tienda", "Pedidos", "% Aceptación", "Monto Falta ($)", "Monto Sobra ($)", "Diferencia Monto Neto ($)"]],
+                        tb_todas_tiendas_disp[[
+                            "Tienda", "Pedidos", "% Aceptación", "% a Favor de Tienda",
+                            "Monto Falta Conf. ($)", "Monto Sobra Conf. ($)", "Diferencia Monto Neto ($)"
+                        ]],
                         hide_index=True,
                         column_config={
-                            "Tienda": st.column_config.Column("Tienda", width="medium"),
-                            "Pedidos": st.column_config.NumberColumn("Pedidos", format="%d", width="medium"),
-                            "% Aceptación": st.column_config.NumberColumn("% Aceptación", format="%.1f %%", width="medium"),
-                            "Monto Falta ($)": st.column_config.NumberColumn("Monto Falta ($)", format="$%.0f", width="medium"),
-                            "Monto Sobra ($)": st.column_config.NumberColumn("Monto Sobra ($)", format="$%.0f", width="medium"),
-                            "Diferencia Monto Neto ($)": st.column_config.NumberColumn("Diferencia Monto Neto ($)", format="$%.0f", width="large")
+                            "Tienda": st.column_config.Column("Tienda", width="small"),
+                            "Pedidos": st.column_config.NumberColumn("Pedidos", format="%d", width="small"),
+                            "% Aceptación": st.column_config.NumberColumn("% Aceptación", format="%.1f %%", width="small"),
+                            "% a Favor de Tienda": st.column_config.NumberColumn("% a Favor Tienda", format="%.1f %%", width="medium", help="Porcentaje de pedidos donde el faltante superó al sobrante rectificado"),
+                            "Monto Falta Conf. ($)": st.column_config.NumberColumn("Falta Conf. ($)", format="$%.0f", width="small"),
+                            "Monto Sobra Conf. ($)": st.column_config.NumberColumn("Sobra Conf. ($)", format="$%.0f", width="small"),
+                            "Diferencia Monto Neto ($)": st.column_config.NumberColumn("Dif. Monto Neto ($)", format="$%.0f", width="medium", help="Diferencia neta correspondiente a rectificaciones confirmadas 'M'")
                         }
                     )
 
@@ -1170,8 +1179,8 @@ try:
                         df_sust_analisis_filtrada = df_sust_analisis_filtrada[df_sust_analisis_filtrada["Pedido"].astype(str).str.contains(busqueda_pedido_sust.strip(), case=False, na=False)]
 
                     # 3. DETALLE FINAL DE ESTADOS EN LA PARTE INFERIOR
-                    st.markdown("### 🔎 3. Detalle Final de Rectificaciones de Sustitución y Estados (Confirmado, Rechazado y Pendiente)")
-                    st.caption("Detalle por SKU con sus estados correspondientes para detectar rápidamente sucursales con alto porcentaje de rechazos.")
+                    st.markdown("### 🔎 Detalle de Rectificaciones de Sustitución y Estados", help="Rectificaciones por sustitución misma familia y diferente familia (Estado: Confirmado, Rechazado y Pendiente)")
+                    st.caption("Detalle de sustituciones misma y diferente familia, comparando el costo del faltante y sobrante y el estado de cada rectificación.")
 
                     cols_detalle_sust = [
                         "Almacén", "Tienda", "Pedido", "Tipo Sustitución", "Área de Salida",
@@ -1208,58 +1217,60 @@ try:
 
         with tab4:
             st.subheader("📦 Análisis de Rectificaciones por Área de Salida")
-            st.markdown("Consolidado y auditoría de pedidos rectificados por **Área de Salida** (se excluyen automáticamente las rectificaciones rechazadas en **Estado 'R'**).")
+            st.markdown("Consolidado y análisis de pedidos rectificados por **Área de Salida**. Las métricas, gráficos y resumen por sector se enfocan en las rectificaciones confirmadas, mientras que el detalle individual incluye todos los estados (P, R y C).")
 
             if not df_rect.empty:
-                df_r_area = df_rect.copy()
+                df_r_area_base = df_rect.copy()
 
                 # Filtro por Tienda en Hoja 4
-                tiendas_area_opt = ["Todas las Tiendas"] + sorted([str(x) for x in df_r_area["Tienda"].dropna().unique() if str(x) != "nan"]) if "Tienda" in df_r_area.columns else ["Todas las Tiendas"]
+                tiendas_area_opt = ["Todas las Tiendas"] + sorted([str(x) for x in df_r_area_base["Tienda"].dropna().unique() if str(x) != "nan"]) if "Tienda" in df_r_area_base.columns else ["Todas las Tiendas"]
                 t_area_sel = st.selectbox("Filtrar por Tienda:", tiendas_area_opt, index=0)
 
-                if t_area_sel != "Todas las Tiendas" and "Tienda" in df_r_area.columns:
-                    df_r_area = df_r_area[df_r_area["Tienda"].astype(str) == str(t_area_sel)]
-                
-                # Excluir de forma predeterminada las rectificaciones rechazadas 'R'
-                if "Estado" in df_r_area.columns:
-                    df_r_area = df_r_area[df_r_area["Estado"] != "R"].copy()
+                if t_area_sel != "Todas las Tiendas" and "Tienda" in df_r_area_base.columns:
+                    df_r_area_base = df_r_area_base[df_r_area_base["Tienda"].astype(str) == str(t_area_sel)]
 
-                if "Area_Salida" not in df_r_area.columns:
-                    df_r_area["Area_Salida"] = "Sin Clasificar"
+                if "Area_Salida" not in df_r_area_base.columns:
+                    df_r_area_base["Area_Salida"] = "Sin Clasificar"
                 else:
-                    df_r_area["Area_Salida"] = df_r_area["Area_Salida"].fillna("Sin Clasificar").astype(str).str.strip()
-                    df_r_area["Area_Salida"] = df_r_area["Area_Salida"].replace(["-", "--", "- ", "", "nan", "None"], "Sin Clasificar")
+                    df_r_area_base["Area_Salida"] = df_r_area_base["Area_Salida"].fillna("Sin Clasificar").astype(str).str.strip()
+                    df_r_area_base["Area_Salida"] = df_r_area_base["Area_Salida"].replace(["-", "--", "- ", "", "nan", "None"], "Sin Clasificar")
 
-                col_motivo_area = "Motivo_Clean" if "Motivo_Clean" in df_r_area.columns else ("Motivo" if "Motivo" in df_r_area.columns else None)
+                col_motivo_area = "Motivo_Clean" if "Motivo_Clean" in df_r_area_base.columns else ("Motivo" if "Motivo" in df_r_area_base.columns else None)
                 if col_motivo_area:
-                    df_r_area["Motivo_Norm"] = df_r_area[col_motivo_area].astype(str).str.strip().str.upper()
+                    df_r_area_base["Motivo_Norm"] = df_r_area_base[col_motivo_area].astype(str).str.strip().str.upper()
                 else:
-                    df_r_area["Motivo_Norm"] = "F"
+                    df_r_area_base["Motivo_Norm"] = "F"
 
-                df_r_area["Estado_Norm"] = df_r_area["Estado"].astype(str).str.strip().str.upper() if "Estado" in df_r_area.columns else "M"
+                col_est_tab4 = "Estado_Clean" if "Estado_Clean" in df_r_area_base.columns else ("Estado" if "Estado" in df_r_area_base.columns else None)
+                df_r_area_base["Estado_Norm"] = df_r_area_base[col_est_tab4].astype(str).str.strip().str.upper() if col_est_tab4 else "M"
 
-                df_r_area["Monto_Falta"] = df_r_area.apply(lambda r: abs(float(r["Monto_Rectif"])) if r["Motivo_Norm"] == "F" else 0.0, axis=1)
-                df_r_area["Monto_Sobra"] = df_r_area.apply(lambda r: -abs(float(r["Monto_Rectif"])) if r["Motivo_Norm"] == "S" else 0.0, axis=1)
-                df_r_area["Monto_Neto"] = df_r_area["Monto_Falta"] + df_r_area["Monto_Sobra"]
-                
-                # MONTO CONFIRMADO SOLO ESTADO 'M' (Faltas + / Sobras -)
-                df_r_area["Monto_Confirmado"] = df_r_area.apply(lambda r: (r["Monto_Falta"] + r["Monto_Sobra"]) if r["Estado_Norm"] == "M" else 0.0, axis=1)
+                # Normalizar estados en detalle: 'M' -> 'C' (Confirmada), 'P' -> 'P' (Pendiente), 'R' -> 'R' (Rechazada)
+                df_r_area_base["Estado_PRC"] = df_r_area_base["Estado_Norm"].replace({"M": "C"})
 
-                tot_areas_unicas = df_r_area["Area_Salida"].nunique()
-                tot_pedidos_afect_area = df_r_area["Pedido"].nunique()
-                tot_lineas_area = len(df_r_area)
-                tot_monto_conf_area = df_r_area["Monto_Confirmado"].sum()
+                # ==============================================================
+                # 1. ANÁLISIS DE RECTIFICACIONES CONFIRMADAS (ESTADO 'M' / 'C')
+                # ==============================================================
+                df_r_area_conf = df_r_area_base[df_r_area_base["Estado_Norm"] == "M"].copy()
+
+                df_r_area_conf["Monto_Falta"] = df_r_area_conf.apply(lambda r: abs(float(r["Monto_Rectif"])) if r["Motivo_Norm"] == "F" else 0.0, axis=1)
+                df_r_area_conf["Monto_Sobra"] = df_r_area_conf.apply(lambda r: -abs(float(r["Monto_Rectif"])) if r["Motivo_Norm"] == "S" else 0.0, axis=1)
+                df_r_area_conf["Monto_Confirmado"] = df_r_area_conf["Monto_Falta"] + df_r_area_conf["Monto_Sobra"]
+
+                tot_areas_unicas = df_r_area_conf["Area_Salida"].nunique()
+                tot_pedidos_afect_area = df_r_area_conf["Pedido"].nunique()
+                tot_lineas_conf_area = len(df_r_area_conf)
+                tot_monto_conf_area = df_r_area_conf["Monto_Confirmado"].sum()
 
                 a1, a2, a3, a4 = st.columns(4)
                 a1.metric("📌 Áreas de Salida Involucradas", f"{tot_areas_unicas:,}")
-                a2.metric("📦 Pedidos Únicos con Rectificación", f"{tot_pedidos_afect_area:,}")
-                a3.metric("📉 Líneas Válidas Totales", f"{tot_lineas_area:,}")
-                a4.metric("💰 Monto Confirmado Estado 'M' ($)", f"${tot_monto_conf_area:,.2f}")
+                a2.metric("📦 Pedidos con Rectificación Confirmada", f"{tot_pedidos_afect_area:,}")
+                a3.metric("📉 Líneas Confirmadas Totales", f"{tot_lineas_conf_area:,}")
+                a4.metric("💰 Monto Confirmado Neto ($)", f"${tot_monto_conf_area:,.2f}")
 
                 st.markdown("---")
-                st.markdown("### 📊 Distribución de Monto Confirmado y Líneas Rectificadas por Área de Salida")
+                st.markdown("### 📊 Distribución de Monto Confirmado y Líneas Confirmadas por Área de Salida")
 
-                tb_area_graf = df_r_area.groupby("Area_Salida", as_index=False).agg(
+                tb_area_graf = df_r_area_conf.groupby("Area_Salida", as_index=False).agg(
                     Pedidos_Rectificados=("Pedido", "nunique"),
                     Lineas_Rectificadas=("Pedido", "count"),
                     Monto_Confirmado=("Monto_Confirmado", "sum")
@@ -1267,7 +1278,7 @@ try:
 
                 col_g1, col_g2 = st.columns(2)
 
-                # GRÁFICO 1: MONTO NETO CONFIRMADO ($) ESTADO 'M'
+                # GRÁFICO 1: MONTO NETO CONFIRMADO ($)
                 with col_g1:
                     tb_area_graf_monto = tb_area_graf.sort_values(by="Monto_Confirmado", ascending=False).reset_index(drop=True)
                     tb_area_graf_monto["Monto_Texto"] = tb_area_graf_monto["Monto_Confirmado"].apply(lambda x: f"${x:,.0f}")
@@ -1275,7 +1286,7 @@ try:
                     fig_area_monto = px.bar(
                         tb_area_graf_monto, x="Area_Salida", y="Monto_Confirmado",
                         color="Area_Salida", text="Monto_Texto",
-                        title="<b>Monto Neto Confirmado ($) Estado 'M' por Sector</b>"
+                        title="<b>Monto Neto Confirmado ($) por Sector</b>"
                     )
                     fig_area_monto.update_traces(textposition='outside')
                     fig_area_monto.update_layout(
@@ -1287,14 +1298,14 @@ try:
                     )
                     st.plotly_chart(fig_area_monto, use_container_width=True)
 
-                # GRÁFICO 2: CANTIDAD DE LÍNEAS RECTIFICADAS POR SECTOR
+                # GRÁFICO 2: CANTIDAD DE LÍNEAS CONFIRMADAS POR SECTOR
                 with col_g2:
                     tb_area_graf_lineas = tb_area_graf.sort_values(by="Lineas_Rectificadas", ascending=False).reset_index(drop=True)
 
                     fig_area_lineas = px.bar(
                         tb_area_graf_lineas, x="Area_Salida", y="Lineas_Rectificadas",
                         color="Area_Salida", text="Lineas_Rectificadas",
-                        title="<b>Cantidad de Líneas Rectificadas por Sector</b>"
+                        title="<b>Cantidad de Líneas Confirmadas por Sector</b>"
                     )
                     fig_area_lineas.update_traces(textposition='outside')
                     fig_area_lineas.update_layout(
@@ -1307,9 +1318,9 @@ try:
                     st.plotly_chart(fig_area_lineas, use_container_width=True)
 
                 st.markdown("---")
-                st.markdown("### 📋 Resumen Consolidado por Área de Salida")
+                st.markdown("### 📋 Resumen Consolidado por Área de Salida (Solo Rectificaciones Confirmadas)")
 
-                tb_area_matriz = df_r_area.groupby("Area_Salida", as_index=False).agg(
+                tb_area_matriz = df_r_area_conf.groupby("Area_Salida", as_index=False).agg(
                     Pedidos_Afectados=("Pedido", "nunique"),
                     Lineas_Rectificadas=("Pedido", "count"),
                     Monto_Falta=("Monto_Falta", "sum"),
@@ -1323,34 +1334,37 @@ try:
                 tb_area_matriz_disp = tb_area_matriz.rename(columns={
                     "Area_Salida": "Área de Salida",
                     "Pedidos_Afectados": "Pedidos Afectados",
-                    "Lineas_Rectificadas": "Líneas Rectificadas",
-                    "Monto_Falta": "Monto Falta ($)",
-                    "Monto_Sobra": "Monto Sobra ($)",
+                    "Lineas_Rectificadas": "Líneas Confirmadas",
+                    "Monto_Falta": "Monto Falta Conf. ($)",
+                    "Monto_Sobra": "Monto Sobra Conf. ($)",
                     "Monto_Confirmado": "Diferencia Neta Confirmada ($)",
                     "% Participación Pedidos": "% Participación Pedidos"
                 })
 
                 st.dataframe(
-                    tb_area_matriz_disp[["Área de Salida", "Pedidos Afectados", "Líneas Rectificadas", "Monto Falta ($)", "Monto Sobra ($)", "Diferencia Neta Confirmada ($)", "% Participación Pedidos"]],
+                    tb_area_matriz_disp[["Área de Salida", "Pedidos Afectados", "Líneas Confirmadas", "Monto Falta Conf. ($)", "Monto Sobra Conf. ($)", "Diferencia Neta Confirmada ($)", "% Participación Pedidos"]],
                     hide_index=True,
                     column_config={
                         "Área de Salida": st.column_config.Column("Área de Salida", width="large"),
                         "Pedidos Afectados": st.column_config.NumberColumn("Pedidos Afectados", format="%d", width="medium"),
-                        "Líneas Rectificadas": st.column_config.NumberColumn("Líneas Rectificadas", format="%d", width="medium"),
-                        "Monto Falta ($)": st.column_config.NumberColumn("Monto Falta ($)", format="$%.2f", width="medium"),
-                        "Monto Sobra ($)": st.column_config.NumberColumn("Monto Sobra ($)", format="$%.2f", width="medium"),
+                        "Líneas Confirmadas": st.column_config.NumberColumn("Líneas Confirmadas", format="%d", width="medium"),
+                        "Monto Falta Conf. ($)": st.column_config.NumberColumn("Monto Falta Conf. ($)", format="$%.2f", width="medium"),
+                        "Monto Sobra Conf. ($)": st.column_config.NumberColumn("Monto Sobra Conf. ($)", format="$%.2f", width="medium"),
                         "Diferencia Neta Confirmada ($)": st.column_config.NumberColumn("Diferencia Neta Confirmada ($)", format="$%.2f", width="large"),
                         "% Participación Pedidos": st.column_config.NumberColumn("% Participación Pedidos", format="%.2f %%", width="medium")
                     }
                 )
 
                 st.markdown("---")
-                st.markdown("### 🔎 Detalle Individual de Rectificaciones por Área de Salida")
+                # ==============================================================
+                # 2. DETALLE INDIVIDUAL DE RECTIFICACIONES (P, R Y C)
+                # ==============================================================
+                st.markdown("### 🔎 Detalle Individual de Rectificaciones por Área de Salida (Estados P, R y C)")
 
-                areas_list_opt = ["Todas las Áreas"] + sorted([str(x) for x in df_r_area["Area_Salida"].unique()])
-                area_especifica_sel = st.selectbox("Seleccionar Área de Salida a Auditar:", areas_list_opt, index=0)
+                areas_list_opt = ["Todas las Áreas"] + sorted([str(x) for x in df_r_area_base["Area_Salida"].unique()])
+                area_especifica_sel = st.selectbox("Seleccionar Área de Salida a Analizar:", areas_list_opt, index=0)
 
-                df_r_area_det = df_r_area.copy()
+                df_r_area_det = df_r_area_base.copy()
                 if area_especifica_sel != "Todas las Áreas":
                     df_r_area_det = df_r_area_det[df_r_area_det["Area_Salida"].astype(str) == str(area_especifica_sel)]
 
@@ -1366,7 +1380,7 @@ try:
                 cols_area_det_disp = [
                     "Almacen", "Tienda", "Pedido", "Area_Salida", 
                     col_art_area, col_desc_area, 
-                    "Motivo", "Procedencia", "Estado", "Monto_Rectif"
+                    "Motivo", "Procedencia", "Estado_PRC", "Monto_Rectif"
                 ]
 
                 cols_exist_area = [c for c in cols_area_det_disp if c in df_r_area_det.columns]
@@ -1379,7 +1393,8 @@ try:
                     "Area_Salida": "Área de Salida",
                     col_art_area: "SKU",
                     col_desc_area: "Producto / Descripción",
-                    "Monto_Signed": "Monto ($)"
+                    "Estado_PRC": "Estado (P/R/C)",
+                    "Monto_Rectif": "Monto ($)"
                 })
 
                 st.dataframe(
@@ -1396,14 +1411,13 @@ try:
                         "Subfamilia": st.column_config.Column("Subfamilia", width="medium"),
                         "Motivo": st.column_config.Column("Motivo", width="small"),
                         "Procedencia": st.column_config.Column("Procedencia", width="small"),
-                        "Estado": st.column_config.Column("Estado", width="small"),
+                        "Estado (P/R/C)": st.column_config.Column("Estado (P/R/C)", width="small", help="'C' = Confirmada | 'P' = Pendiente | 'R' = Rechazada"),
                         "Monto ($)": st.column_config.NumberColumn("Monto ($)", format="$%.2f", width="medium")
                     }
                 )
             else:
                 st.info("ℹ️ No hay rectificaciones registradas para el análisis por Área de Salida.")
 
-        # HOJA 5: AUDITORÍA DE UNIDADES SUELTAS (FUERA DE CLASIFICACIÓN SLA)
         with tab5:
             st.subheader("🧩 Análisis de Unidades Sueltas (Rectificaciones Menores a 1 Bulto Común - UxB)")
             st.markdown("Auditoría independiente fuera de la clasificación de SLA para identificar aquellas **líneas rectificadas cuya cantidad enviada o reclamada es menor a un bulto cerrado** (`Unidades < UxB`). Permite auditar la incidencia de preparación por unidades sueltas por tienda y sector.")
