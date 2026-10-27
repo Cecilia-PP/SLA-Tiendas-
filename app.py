@@ -1706,14 +1706,10 @@ try:
                     df_csv_anul_sec1 = df_csv_anul[df_csv_anul["Motivo_Norm"].isin(causas_sel_anul)].copy() if causas_sel_anul else df_csv_anul.copy()
 
                     if not df_csv_anul_sec1.empty:
-                        # 1. Gráfico
+                        # 1. Gráfico (Adaptativo: Cantidad Absoluta si hay 1 almacén / Porcentaje si hay varios)
                         grp_anul = df_csv_anul_sec1.groupby(["Mes_Num", "Nombre_Mes", "Etiqueta_Almacen"], as_index=False).agg(
-                            Cant_Lineas=("Pedido", "count")
+                            Cant_Pedidos=("Pedido", "nunique")
                         )
-
-                        tot_mes_anul = grp_anul.groupby(["Mes_Num", "Nombre_Mes"])["Cant_Lineas"].transform("sum")
-                        grp_anul["Porcentaje"] = (grp_anul["Cant_Lineas"] / tot_mes_anul * 100.0).fillna(0.0)
-                        grp_anul["Etiqueta_Texto"] = grp_anul.apply(lambda r: f"<b>{r['Porcentaje']:.1f}%</b><br>({int(r['Cant_Lineas']):,} líns)", axis=1)
 
                         meses_presentes_anul = sorted([m for m in grp_anul["Mes_Num"].unique() if m in mapa_meses_p])
                         orden_meses_anul = [mapa_meses_p[m] for m in meses_presentes_anul]
@@ -1723,44 +1719,70 @@ try:
                             "Almacén 504": "#D06A4C", "Almacén 509": "#E09F53", "Almacén 514": "#2B5C8F"
                         }
 
+                        cant_alm_anul = grp_anul["Etiqueta_Almacen"].nunique()
+                        if cant_alm_anul <= 1:
+                            # Modo 1 solo Almacén: Mostrar evolución en Cantidad de Pedidos (evita barras planas al 100%)
+                            eje_y_anul = "Cant_Pedidos"
+                            titulo_y_anul = "Cantidad de Pedidos"
+                            rango_y_anul = None
+                            grp_anul["Etiqueta_Texto"] = grp_anul["Cant_Pedidos"].apply(lambda v: f"<b>{int(v):,}</b><br>pedidos")
+                            alm_nombre_tit = grp_anul["Etiqueta_Almacen"].iloc[0] if not grp_anul.empty else "Almacén"
+                            titulo_graf_anul = f"<b>Evolución Mensual de Pedidos Anulados - {alm_nombre_tit}</b>"
+                            hover_dict_anul = {"Cant_Pedidos": ":,"}
+                        else:
+                            # Modo Varios Almacenes: Mostrar Distribución Porcentual Apilada
+                            eje_y_anul = "Porcentaje"
+                            titulo_y_anul = "Porcentaje de Participación (%)"
+                            rango_y_anul = [0, 100]
+                            tot_mes_anul = grp_anul.groupby(["Mes_Num", "Nombre_Mes"])["Cant_Pedidos"].transform("sum")
+                            grp_anul["Porcentaje"] = (grp_anul["Cant_Pedidos"] / tot_mes_anul * 100.0).fillna(0.0)
+                            grp_anul["Etiqueta_Texto"] = grp_anul.apply(lambda r: f"<b>{r['Porcentaje']:.1f}%</b><br>({int(r['Cant_Pedidos']):,} peds)", axis=1)
+                            titulo_graf_anul = "<b>Distribución Porcentual y Cantidad por Almacén - Pedidos Anulados</b>"
+                            hover_dict_anul = {"Cant_Pedidos": ":,", "Porcentaje": ":.2f%"}
+
                         fig_apilado_anul = px.bar(
                             grp_anul,
                             x="Nombre_Mes",
-                            y="Porcentaje",
+                            y=eje_y_anul,
                             color="Etiqueta_Almacen",
-                            title="<b>Distribución Porcentual y Cantidad por Almacén - Anuladas</b>",
+                            title=titulo_graf_anul,
                             text="Etiqueta_Texto",
                             color_discrete_map=mapa_colores_alm_g,
                             barmode="stack",
-                            hover_data={"Cant_Lineas": ":,", "Porcentaje": ":.2f%"}
+                            hover_data=hover_dict_anul
                         )
 
                         fig_apilado_anul.update_traces(textposition='inside')
-                        fig_apilado_anul.update_layout(
+                        layout_dict_anul = dict(
                             xaxis=dict(title="Mes", categoryorder="array", categoryarray=orden_meses_anul),
-                            yaxis=dict(title="Porcentaje de Participación (%)", range=[0, 100]),
+                            yaxis=dict(title=titulo_y_anul),
                             height=410,
                             paper_bgcolor="rgba(0,0,0,0)",
                             plot_bgcolor="rgba(0,0,0,0)",
                             legend_title_text="Almacén"
                         )
+                        if rango_y_anul:
+                            layout_dict_anul["yaxis"]["range"] = rango_y_anul
+                        fig_apilado_anul.update_layout(**layout_dict_anul)
 
                         st.plotly_chart(fig_apilado_anul, use_container_width=True)
 
                         st.markdown("---")
-                        # 2. Resumen por Causa
+                        # 2. Resumen por Causa (incluyendo Tiendas Afectadas)
                         st.markdown("#### 📋 Resumen por Causa de Anulación")
 
                         df_causas_anul_grp = df_csv_anul_sec1.groupby("Motivo_Norm", as_index=False).agg(
-                            Líneas_Anuladas=("Pedido", "count"),
+                            Tiendas_Afectadas=("Tienda", "nunique") if "Tienda" in df_csv_anul_sec1.columns else ("Pedido", "nunique"),
                             Pedidos_Afectados=("Pedido", "nunique"),
+                            Líneas_Anuladas=("Pedido", "count"),
                             Monto_Total=("Monto_Signed", "sum")
-                        ).sort_values(by="Líneas_Anuladas", ascending=False).reset_index(drop=True)
+                        ).sort_values(by="Pedidos_Afectados", ascending=False).reset_index(drop=True)
 
                         df_causas_anul_disp = df_causas_anul_grp.rename(columns={
                             "Motivo_Norm": "Causa / Motivo de Anulación",
-                            "Líneas_Anuladas": "Líneas Anuladas",
+                            "Tiendas_Afectadas": "Tiendas Afectadas",
                             "Pedidos_Afectados": "Pedidos",
+                            "Líneas_Anuladas": "Líneas Anuladas",
                             "Monto_Total": "Monto Anulado ($)"
                         })
 
@@ -1769,8 +1791,9 @@ try:
                             hide_index=True,
                             column_config={
                                 "Causa / Motivo de Anulación": st.column_config.Column("Causa / Motivo de Anulación", width="large"),
-                                "Líneas Anuladas": st.column_config.NumberColumn("Líneas Anuladas", format="%d", width="small"),
+                                "Tiendas Afectadas": st.column_config.NumberColumn("Tiendas Afectadas", format="%d", width="small"),
                                 "Pedidos": st.column_config.NumberColumn("Pedidos", format="%d", width="small"),
+                                "Líneas Anuladas": st.column_config.NumberColumn("Líneas Anuladas", format="%d", width="small"),
                                 "Monto Anulado ($)": st.column_config.NumberColumn("Monto Anulado ($)", format="$%.0f", width="medium")
                             }
                         )
@@ -1831,56 +1854,78 @@ try:
                     df_csv_aprob_sec2 = df_csv_aprob[df_csv_aprob["Motivo_Norm"].isin(causas_sel_aprob)].copy() if causas_sel_aprob else df_csv_aprob.copy()
 
                     if not df_csv_aprob_sec2.empty:
-                        # 1. Gráfico
+                        # 1. Gráfico (Adaptativo: Cantidad Absoluta si hay 1 almacén / Porcentaje si hay varios)
                         grp_aprob = df_csv_aprob_sec2.groupby(["Mes_Num", "Nombre_Mes", "Etiqueta_Almacen"], as_index=False).agg(
-                            Cant_Lineas=("Pedido", "count")
+                            Cant_Pedidos=("Pedido", "nunique")
                         )
-
-                        tot_mes_aprob = grp_aprob.groupby(["Mes_Num", "Nombre_Mes"])["Cant_Lineas"].transform("sum")
-                        grp_aprob["Porcentaje"] = (grp_aprob["Cant_Lineas"] / tot_mes_aprob * 100.0).fillna(0.0)
-                        grp_aprob["Etiqueta_Texto"] = grp_aprob.apply(lambda r: f"<b>{r['Porcentaje']:.1f}%</b><br>({int(r['Cant_Lineas']):,} líns)", axis=1)
 
                         meses_presentes_aprob = sorted([m for m in grp_aprob["Mes_Num"].unique() if m in mapa_meses_p])
                         orden_meses_aprob = [mapa_meses_p[m] for m in meses_presentes_aprob]
 
+                        cant_alm_aprob = grp_aprob["Etiqueta_Almacen"].nunique()
+                        if cant_alm_aprob <= 1:
+                            # Modo 1 solo Almacén: Mostrar evolución en Cantidad de Pedidos (evita barras planas al 100%)
+                            eje_y_aprob = "Cant_Pedidos"
+                            titulo_y_aprob = "Cantidad de Pedidos"
+                            rango_y_aprob = None
+                            grp_aprob["Etiqueta_Texto"] = grp_aprob["Cant_Pedidos"].apply(lambda v: f"<b>{int(v):,}</b><br>pedidos")
+                            alm_nombre_tit = grp_aprob["Etiqueta_Almacen"].iloc[0] if not grp_aprob.empty else "Almacén"
+                            titulo_graf_aprob = f"<b>Evolución Mensual de Pedidos Aprobados - {alm_nombre_tit}</b>"
+                            hover_dict_aprob = {"Cant_Pedidos": ":,"}
+                        else:
+                            # Modo Varios Almacenes: Mostrar Distribución Porcentual Apilada
+                            eje_y_aprob = "Porcentaje"
+                            titulo_y_aprob = "Porcentaje de Participación (%)"
+                            rango_y_aprob = [0, 100]
+                            tot_mes_aprob = grp_aprob.groupby(["Mes_Num", "Nombre_Mes"])["Cant_Pedidos"].transform("sum")
+                            grp_aprob["Porcentaje"] = (grp_aprob["Cant_Pedidos"] / tot_mes_aprob * 100.0).fillna(0.0)
+                            grp_aprob["Etiqueta_Texto"] = grp_aprob.apply(lambda r: f"<b>{r['Porcentaje']:.1f}%</b><br>({int(r['Cant_Pedidos']):,} peds)", axis=1)
+                            titulo_graf_aprob = "<b>Distribución Porcentual y Cantidad por Almacén - Pedidos Aprobados</b>"
+                            hover_dict_aprob = {"Cant_Pedidos": ":,", "Porcentaje": ":.2f%"}
+
                         fig_apilado_aprob = px.bar(
                             grp_aprob,
                             x="Nombre_Mes",
-                            y="Porcentaje",
+                            y=eje_y_aprob,
                             color="Etiqueta_Almacen",
-                            title="<b>Distribución Porcentual y Cantidad por Almacén - Aprobadas</b>",
+                            title=titulo_graf_aprob,
                             text="Etiqueta_Texto",
                             color_discrete_map=mapa_colores_alm_g,
                             barmode="stack",
-                            hover_data={"Cant_Lineas": ":,", "Porcentaje": ":.2f%"}
+                            hover_data=hover_dict_aprob
                         )
 
                         fig_apilado_aprob.update_traces(textposition='inside')
-                        fig_apilado_aprob.update_layout(
+                        layout_dict_aprob = dict(
                             xaxis=dict(title="Mes", categoryorder="array", categoryarray=orden_meses_aprob),
-                            yaxis=dict(title="Porcentaje de Participación (%)", range=[0, 100]),
+                            yaxis=dict(title=titulo_y_aprob),
                             height=410,
                             paper_bgcolor="rgba(0,0,0,0)",
                             plot_bgcolor="rgba(0,0,0,0)",
                             legend_title_text="Almacén"
                         )
+                        if rango_y_aprob:
+                            layout_dict_aprob["yaxis"]["range"] = rango_y_aprob
+                        fig_apilado_aprob.update_layout(**layout_dict_aprob)
 
                         st.plotly_chart(fig_apilado_aprob, use_container_width=True)
 
                         st.markdown("---")
-                        # 2. Resumen por Causa
+                        # 2. Resumen por Causa (incluyendo Tiendas Afectadas)
                         st.markdown("#### 📋 Resumen por Causa de Aprobación")
 
                         df_causas_aprob_grp = df_csv_aprob_sec2.groupby("Motivo_Norm", as_index=False).agg(
-                            Líneas_Aprobadas=("Pedido", "count"),
+                            Tiendas_Afectadas=("Tienda", "nunique") if "Tienda" in df_csv_aprob_sec2.columns else ("Pedido", "nunique"),
                             Pedidos_Afectados=("Pedido", "nunique"),
+                            Líneas_Aprobadas=("Pedido", "count"),
                             Monto_Total=("Monto_Signed", "sum")
-                        ).sort_values(by="Líneas_Aprobadas", ascending=False).reset_index(drop=True)
+                        ).sort_values(by="Pedidos_Afectados", ascending=False).reset_index(drop=True)
 
                         df_causas_aprob_disp = df_causas_aprob_grp.rename(columns={
                             "Motivo_Norm": "Causa / Motivo de Aprobación",
-                            "Líneas_Aprobadas": "Líneas Aprobadas",
+                            "Tiendas_Afectadas": "Tiendas Afectadas",
                             "Pedidos_Afectados": "Pedidos",
+                            "Líneas_Aprobadas": "Líneas Aprobadas",
                             "Monto_Total": "Monto Aprobado ($)"
                         })
 
@@ -1889,27 +1934,30 @@ try:
                             hide_index=True,
                             column_config={
                                 "Causa / Motivo de Aprobación": st.column_config.Column("Causa / Motivo de Aprobación", width="large"),
-                                "Líneas Aprobadas": st.column_config.NumberColumn("Líneas Aprobadas", format="%d", width="small"),
+                                "Tiendas Afectadas": st.column_config.NumberColumn("Tiendas Afectadas", format="%d", width="small"),
                                 "Pedidos": st.column_config.NumberColumn("Pedidos", format="%d", width="small"),
+                                "Líneas Aprobadas": st.column_config.NumberColumn("Líneas Aprobadas", format="%d", width="small"),
                                 "Monto Aprobado ($)": st.column_config.NumberColumn("Monto Aprobado ($)", format="$%.0f", width="medium")
                             }
                         )
 
-                        # 3. Distribución por Área de Salida
+                        # 3. Distribución por Área de Salida (incluyendo Tiendas Afectadas)
                         st.markdown("---")
                         st.markdown("#### 📦 Distribución por Área de Salida en Rectificaciones Aprobadas")
                         
                         df_area_aprob_grp = df_csv_aprob_sec2.groupby(["Area_Salida", "Motivo_Norm"], as_index=False).agg(
-                            Líneas_Aprobadas=("Pedido", "count"),
+                            Tiendas_Afectadas=("Tienda", "nunique") if "Tienda" in df_csv_aprob_sec2.columns else ("Pedido", "nunique"),
                             Pedidos_Unicos=("Pedido", "nunique"),
+                            Líneas_Aprobadas=("Pedido", "count"),
                             Monto_Total=("Monto_Signed", "sum")
-                        ).sort_values(by=["Líneas_Aprobadas"], ascending=False).reset_index(drop=True)
+                        ).sort_values(by=["Pedidos_Unicos"], ascending=False).reset_index(drop=True)
 
                         df_area_aprob_disp = df_area_aprob_grp.rename(columns={
                             "Area_Salida": "Área de Salida",
                             "Motivo_Norm": "Causa / Motivo",
-                            "Líneas_Aprobadas": "Líneas Aprobadas",
+                            "Tiendas_Afectadas": "Tiendas Afectadas",
                             "Pedidos_Unicos": "Pedidos",
+                            "Líneas_Aprobadas": "Líneas Aprobadas",
                             "Monto_Total": "Monto Total ($)"
                         })
 
@@ -1919,8 +1967,9 @@ try:
                             column_config={
                                 "Área de Salida": st.column_config.Column("Área de Salida", width="medium"),
                                 "Causa / Motivo": st.column_config.Column("Causa / Motivo", width="large"),
-                                "Líneas Aprobadas": st.column_config.NumberColumn("Líneas Aprobadas", format="%d", width="small"),
+                                "Tiendas Afectadas": st.column_config.NumberColumn("Tiendas Afectadas", format="%d", width="small"),
                                 "Pedidos": st.column_config.NumberColumn("Pedidos", format="%d", width="small"),
+                                "Líneas Aprobadas": st.column_config.NumberColumn("Líneas Aprobadas", format="%d", width="small"),
                                 "Monto Total ($)": st.column_config.NumberColumn("Monto Total ($)", format="$%.0f", width="medium")
                             }
                         )
