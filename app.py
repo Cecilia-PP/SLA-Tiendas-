@@ -786,6 +786,66 @@ try:
                 }
             )
 
+            st.markdown("---")
+            st.markdown("### 👤 Ranking y Puntaje SLA por Franquiciado / Supervisor")
+            st.caption("Puntaje SLA ponderado (escala 0-10 ⭐), pedidos recibidos, pedidos rectificados y tasa de aceptación por franquiciado / supervisor.")
+
+            if "Responsable_Tienda" in df_sla.columns and df_sla["Responsable_Tienda"].notna().any():
+                df_sla_resp = df_sla[~df_sla["Responsable_Tienda"].isin(["Sin Asignar", "nan", ""])].copy()
+                if not df_sla_resp.empty:
+                    df_resp_grp = df_sla_resp.groupby("Responsable_Tienda", as_index=False).agg(
+                        Tiendas_Asignadas=("Tienda", "nunique"),
+                        Pedidos_Totales=("Pedido", "count"),
+                        Pedidos_Rectificados=("Casuistica", lambda x: (x != "Pedido Perfecto").sum()),
+                        Puntos_Obtenidos=("Puntos_Obtenidos", "sum")
+                    )
+                    df_resp_grp["Puntos_Posibles"] = df_resp_grp["Pedidos_Totales"] * 10.0
+                    df_resp_grp["Puntaje SLA"] = (df_resp_grp["Puntos_Obtenidos"] / df_resp_grp["Puntos_Posibles"]) * 10.0
+                    df_resp_grp["% Pedidos con Rectificación"] = (df_resp_grp["Pedidos_Rectificados"] / df_resp_grp["Pedidos_Totales"]) * 100.0
+
+                    if not df_rect.empty and "Responsable_Tienda" in df_rect.columns:
+                        col_est_r = "Estado_Clean" if "Estado_Clean" in df_rect.columns else ("Estado" if "Estado" in df_rect.columns else "Pedido")
+                        grp_rect_resp = df_rect.groupby("Responsable_Tienda", as_index=False).agg(
+                            Lineas_Grabadas=("Pedido", "count"),
+                            Lineas_Aprobadas=(col_est_r, lambda x: (x.astype(str).str.strip().str.upper() == "M").sum() if col_est_r != "Pedido" else len(x))
+                        )
+                        grp_rect_resp["% Aceptación"] = (grp_rect_resp["Lineas_Aprobadas"] / grp_rect_resp["Lineas_Grabadas"] * 100.0).fillna(0.0)
+                        mapa_acep_resp = grp_rect_resp.set_index("Responsable_Tienda")["% Aceptación"].to_dict()
+                        mapa_lin_resp = grp_rect_resp.set_index("Responsable_Tienda")["Lineas_Aprobadas"].to_dict()
+                        df_resp_grp["Líneas Confirmadas"] = df_resp_grp["Responsable_Tienda"].map(mapa_lin_resp).fillna(0).astype(int)
+                        df_resp_grp["% Aceptación"] = df_resp_grp["Responsable_Tienda"].map(mapa_acep_resp).fillna(100.0)
+                    else:
+                        df_resp_grp["Líneas Confirmadas"] = 0
+                        df_resp_grp["% Aceptación"] = 100.0
+
+                    df_resp_grp = df_resp_grp.sort_values(by=["Puntaje SLA", "Pedidos_Totales"], ascending=[False, False]).reset_index(drop=True)
+
+                    st.dataframe(
+                        df_resp_grp[[
+                            "Responsable_Tienda", "Tiendas_Asignadas", "Pedidos_Totales", "Puntaje SLA",
+                            "Pedidos_Rectificados", "% Pedidos con Rectificación", "Líneas Confirmadas", "% Aceptación"
+                        ]].rename(columns={
+                            "Responsable_Tienda": "Franquiciado / Supervisor",
+                            "Tiendas_Asignadas": "Tiendas",
+                            "Pedidos_Totales": "Pedidos Totales",
+                            "Pedidos_Rectificados": "Pedidos Rectificados"
+                        }),
+                        hide_index=True,
+                        column_config={
+                            "Franquiciado / Supervisor": st.column_config.Column("Franquiciado / Supervisor", width="large"),
+                            "Tiendas": st.column_config.NumberColumn("Tiendas", format="%d", width="small"),
+                            "Pedidos Totales": st.column_config.NumberColumn("Pedidos Totales", format="%d", width="small"),
+                            "Puntaje SLA": st.column_config.NumberColumn("Puntaje SLA", format="%.2f ⭐", width="medium"),
+                            "Pedidos Rectificados": st.column_config.NumberColumn("Pedidos Rectificados", format="%d", width="small"),
+                            "% Pedidos con Rectificación": st.column_config.NumberColumn("% Pedidos Rectificados", format="%.1f %%", width="medium"),
+                            "Líneas Confirmadas": st.column_config.NumberColumn("Líneas Conf.", format="%d", width="small"),
+                            "% Aceptación": st.column_config.NumberColumn("% Aceptación", format="%.1f %%", width="small")
+                        }
+                    )
+                else:
+                    st.info("ℹ️ No hay datos disponibles de franquiciados/supervisores para la selección actual.")
+
+
 
         with tab2:
                 st.subheader("🏪 Detalle de Rectificaciones por Tienda")
@@ -1719,16 +1779,17 @@ try:
                             "Almacén 504": "#D06A4C", "Almacén 509": "#E09F53", "Almacén 514": "#2B5C8F"
                         }
 
+                        grp_anul["Pedidos"] = grp_anul["Cant_Pedidos"]
                         cant_alm_anul = grp_anul["Etiqueta_Almacen"].nunique()
                         if cant_alm_anul <= 1:
                             # Modo 1 solo Almacén: Mostrar evolución en Cantidad de Pedidos (evita barras planas al 100%)
                             eje_y_anul = "Cant_Pedidos"
                             titulo_y_anul = "Cantidad de Pedidos"
                             rango_y_anul = None
-                            grp_anul["Etiqueta_Texto"] = grp_anul["Cant_Pedidos"].apply(lambda v: f"<b>{int(v):,}</b><br>pedidos")
+                            grp_anul["Etiqueta_Texto"] = grp_anul["Cant_Pedidos"].apply(lambda v: f"<b>{int(v):,}</b><br>Pedidos")
                             alm_nombre_tit = grp_anul["Etiqueta_Almacen"].iloc[0] if not grp_anul.empty else "Almacén"
                             titulo_graf_anul = f"<b>Evolución Mensual de Pedidos Anulados - {alm_nombre_tit}</b>"
-                            hover_dict_anul = {"Cant_Pedidos": ":,"}
+                            hover_dict_anul = {"Pedidos": ":,", "Cant_Pedidos": False}
                         else:
                             # Modo Varios Almacenes: Mostrar Distribución Porcentual Apilada
                             eje_y_anul = "Porcentaje"
@@ -1736,9 +1797,9 @@ try:
                             rango_y_anul = [0, 100]
                             tot_mes_anul = grp_anul.groupby(["Mes_Num", "Nombre_Mes"])["Cant_Pedidos"].transform("sum")
                             grp_anul["Porcentaje"] = (grp_anul["Cant_Pedidos"] / tot_mes_anul * 100.0).fillna(0.0)
-                            grp_anul["Etiqueta_Texto"] = grp_anul.apply(lambda r: f"<b>{r['Porcentaje']:.1f}%</b><br>({int(r['Cant_Pedidos']):,} peds)", axis=1)
+                            grp_anul["Etiqueta_Texto"] = grp_anul.apply(lambda r: f"<b>{r['Porcentaje']:.1f}%</b><br>({int(r['Cant_Pedidos']):,} Pedidos)", axis=1)
                             titulo_graf_anul = "<b>Distribución Porcentual y Cantidad por Almacén - Pedidos Anulados</b>"
-                            hover_dict_anul = {"Cant_Pedidos": ":,", "Porcentaje": ":.2f%"}
+                            hover_dict_anul = {"Pedidos": ":,", "Porcentaje": ":.2f%", "Cant_Pedidos": False}
 
                         fig_apilado_anul = px.bar(
                             grp_anul,
@@ -1862,16 +1923,17 @@ try:
                         meses_presentes_aprob = sorted([m for m in grp_aprob["Mes_Num"].unique() if m in mapa_meses_p])
                         orden_meses_aprob = [mapa_meses_p[m] for m in meses_presentes_aprob]
 
+                        grp_aprob["Pedidos"] = grp_aprob["Cant_Pedidos"]
                         cant_alm_aprob = grp_aprob["Etiqueta_Almacen"].nunique()
                         if cant_alm_aprob <= 1:
                             # Modo 1 solo Almacén: Mostrar evolución en Cantidad de Pedidos (evita barras planas al 100%)
                             eje_y_aprob = "Cant_Pedidos"
                             titulo_y_aprob = "Cantidad de Pedidos"
                             rango_y_aprob = None
-                            grp_aprob["Etiqueta_Texto"] = grp_aprob["Cant_Pedidos"].apply(lambda v: f"<b>{int(v):,}</b><br>pedidos")
+                            grp_aprob["Etiqueta_Texto"] = grp_aprob["Cant_Pedidos"].apply(lambda v: f"<b>{int(v):,}</b><br>Pedidos")
                             alm_nombre_tit = grp_aprob["Etiqueta_Almacen"].iloc[0] if not grp_aprob.empty else "Almacén"
                             titulo_graf_aprob = f"<b>Evolución Mensual de Pedidos Aprobados - {alm_nombre_tit}</b>"
-                            hover_dict_aprob = {"Cant_Pedidos": ":,"}
+                            hover_dict_aprob = {"Pedidos": ":,", "Cant_Pedidos": False}
                         else:
                             # Modo Varios Almacenes: Mostrar Distribución Porcentual Apilada
                             eje_y_aprob = "Porcentaje"
@@ -1879,9 +1941,9 @@ try:
                             rango_y_aprob = [0, 100]
                             tot_mes_aprob = grp_aprob.groupby(["Mes_Num", "Nombre_Mes"])["Cant_Pedidos"].transform("sum")
                             grp_aprob["Porcentaje"] = (grp_aprob["Cant_Pedidos"] / tot_mes_aprob * 100.0).fillna(0.0)
-                            grp_aprob["Etiqueta_Texto"] = grp_aprob.apply(lambda r: f"<b>{r['Porcentaje']:.1f}%</b><br>({int(r['Cant_Pedidos']):,} peds)", axis=1)
+                            grp_aprob["Etiqueta_Texto"] = grp_aprob.apply(lambda r: f"<b>{r['Porcentaje']:.1f}%</b><br>({int(r['Cant_Pedidos']):,} Pedidos)", axis=1)
                             titulo_graf_aprob = "<b>Distribución Porcentual y Cantidad por Almacén - Pedidos Aprobados</b>"
-                            hover_dict_aprob = {"Cant_Pedidos": ":,", "Porcentaje": ":.2f%"}
+                            hover_dict_aprob = {"Pedidos": ":,", "Porcentaje": ":.2f%", "Cant_Pedidos": False}
 
                         fig_apilado_aprob = px.bar(
                             grp_aprob,
@@ -1941,41 +2003,8 @@ try:
                             }
                         )
 
-                        # 3. Distribución por Área de Salida (incluyendo Tiendas Afectadas)
                         st.markdown("---")
-                        st.markdown("#### 📦 Distribución por Área de Salida en Rectificaciones Aprobadas")
-                        
-                        df_area_aprob_grp = df_csv_aprob_sec2.groupby(["Area_Salida", "Motivo_Norm"], as_index=False).agg(
-                            Tiendas_Afectadas=("Tienda", "nunique") if "Tienda" in df_csv_aprob_sec2.columns else ("Pedido", "nunique"),
-                            Pedidos_Unicos=("Pedido", "nunique"),
-                            Líneas_Aprobadas=("Pedido", "count"),
-                            Monto_Total=("Monto_Signed", "sum")
-                        ).sort_values(by=["Pedidos_Unicos"], ascending=False).reset_index(drop=True)
-
-                        df_area_aprob_disp = df_area_aprob_grp.rename(columns={
-                            "Area_Salida": "Área de Salida",
-                            "Motivo_Norm": "Causa / Motivo",
-                            "Tiendas_Afectadas": "Tiendas Afectadas",
-                            "Pedidos_Unicos": "Pedidos",
-                            "Líneas_Aprobadas": "Líneas Aprobadas",
-                            "Monto_Total": "Monto Total ($)"
-                        })
-
-                        st.dataframe(
-                            df_area_aprob_disp,
-                            hide_index=True,
-                            column_config={
-                                "Área de Salida": st.column_config.Column("Área de Salida", width="medium"),
-                                "Causa / Motivo": st.column_config.Column("Causa / Motivo", width="large"),
-                                "Tiendas Afectadas": st.column_config.NumberColumn("Tiendas Afectadas", format="%d", width="small"),
-                                "Pedidos": st.column_config.NumberColumn("Pedidos", format="%d", width="small"),
-                                "Líneas Aprobadas": st.column_config.NumberColumn("Líneas Aprobadas", format="%d", width="small"),
-                                "Monto Total ($)": st.column_config.NumberColumn("Monto Total ($)", format="$%.0f", width="medium")
-                            }
-                        )
-
-                        st.markdown("---")
-                        # 4. Top de Tiendas Aprobadas
+                        # 3. Top de Tiendas Aprobadas
                         st.markdown("### 🏆 Top de Tiendas con Mayor Cantidad de Líneas Aprobadas")
 
                         if "Tienda" in df_csv_aprob_sec2.columns:
