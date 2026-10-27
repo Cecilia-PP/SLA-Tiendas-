@@ -2354,17 +2354,25 @@ try:
             st.markdown("### 📋 Reglas de Puntaje y Evaluación SLA por Pedido")
             
             matriz_p = pd.DataFrame([
-                {"Casuística Operativa": "Pedido Perfecto", "Descuento Aplicado": "0.0 Pts", "Puntaje por Pedido": "10.0 / 10", "Simplificado": "Pedido sin rectificaciones"},
-                {"Casuística Operativa": "Sobrante Neto", "Descuento Aplicado": "0.0 Pts", "Puntaje por Pedido": "10.0 / 10", "Simplificado": "Pedido con rectificación de sobra"},
-                {"Casuística Operativa": "Sustitución Misma Subfamilia", "Descuento Aplicado": "-2.5 Pts", "Puntaje por Pedido": "7.5 / 10", "Simplificado": "Pedido con rectificación de falta y sobra en artículos de igual subfamilia"},
-                {"Casuística Operativa": "Sustitución Distinta Subfamilia", "Descuento Aplicado": "-4.5 Pts", "Puntaje por Pedido": "5.5 / 10", "Simplificado": "Pedido con rectificación de falta y sobra en artículos de distintas subfamilias"},
-                {"Casuística Operativa": "Falta/Sobra", "Descuento Aplicado": "-5.5 Pts", "Puntaje por Pedido": "4.5 / 10", "Simplificado": "Pedido con rectificación de falta y sobra"},
-                {"Casuística Operativa": "Faltante Neto", "Descuento Aplicado": "-6.0 Pts", "Puntaje por Pedido": "4.0 / 10", "Simplificado": "Pedido con rectificación de solo falta"},
-                {"Casuística Operativa": "Formato no entregado", "Descuento Aplicado": "-6.0 Pts", "Puntaje por Pedido": "4.0 / 10", "Simplificado": "Pedido con rectificación de solo falta de más de 10 líneas"},
-                {"Casuística Operativa": "Error facturación master", "Descuento Aplicado": "-6.0 Pts", "Puntaje por Pedido": "4.0 / 10", "Simplificado": "Pedido con rectificación de falta en bultos Master"},
-                {"Casuística Operativa": "Etiquetas Cambiadas", "Descuento Aplicado": "-10.0 Pts", "Puntaje por Pedido": "0.0 / 10", "Simplificado": "Faltas y sobras simultáneas mayores o iguales a 12 líneas rectificadas"}
+                {"Casuística Operativa": "Pedido Perfecto", "Descuento Aplicado": "0.0 Pts", "Descripción": "Pedido sin rectificaciones"},
+                {"Casuística Operativa": "Sobrante Neto", "Descuento Aplicado": "0.0 Pts", "Descripción": "Pedido con rectificación de sobra"},
+                {"Casuística Operativa": "Sustitución Misma Subfamilia", "Descuento Aplicado": "-2.5 Pts", "Descripción": "Pedido con rectificación de falta y sobra en artículos de igual subfamilia"},
+                {"Casuística Operativa": "Sustitución Distinta Subfamilia", "Descuento Aplicado": "-4.5 Pts", "Descripción": "Pedido con rectificación de falta y sobra en artículos de distintas subfamilias"},
+                {"Casuística Operativa": "Falta/Sobra", "Descuento Aplicado": "-5.5 Pts", "Descripción": "Pedido con rectificación de falta y sobra"},
+                {"Casuística Operativa": "Faltante Neto", "Descuento Aplicado": "-6.0 Pts", "Descripción": "Pedido con rectificación de solo falta"},
+                {"Casuística Operativa": "Formato no entregado", "Descuento Aplicado": "-6.0 Pts", "Descripción": "Pedido con rectificación de solo falta de más de 10 líneas"},
+                {"Casuística Operativa": "Error facturación master", "Descuento Aplicado": "-6.0 Pts", "Descripción": "Pedido con rectificación de falta en bultos Master"},
+                {"Casuística Operativa": "Etiquetas Cambiadas", "Descuento Aplicado": "-10.0 Pts", "Descripción": "Faltas y sobras simultáneas mayores o iguales a 12 líneas rectificadas"}
             ])
-            st.dataframe(matriz_p, hide_index=True)
+            st.dataframe(
+                matriz_p,
+                hide_index=True,
+                column_config={
+                    "Casuística Operativa": st.column_config.Column("Casuística Operativa", width="medium"),
+                    "Descuento Aplicado": st.column_config.Column("Descuento Aplicado", width="small"),
+                    "Descripción": st.column_config.Column("Descripción", width="large")
+                }
+            )
 
             st.markdown("---")
             st.markdown("### 📚 Glosario de Conceptos y Siglas Operativas")
