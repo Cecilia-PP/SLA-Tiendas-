@@ -67,6 +67,44 @@ def corregir_encoding_texto(texto):
     except (UnicodeEncodeError, UnicodeDecodeError):
         return s
 
+def normalizar_fechas_a_mes(serie_fechas):
+    if serie_fechas is None or serie_fechas.empty:
+        return pd.Series(0, index=serie_fechas.index if serie_fechas is not None else [], dtype=int)
+    
+    s_clean = serie_fechas.astype(str).str.strip().str.replace(".0", "", regex=False)
+    
+    # 1. Probar formato estándar DD/MM/YYYY
+    dt1 = pd.to_datetime(s_clean, format="%d/%m/%Y", errors="coerce")
+    
+    # 2. Probar formato DD/MM/YY (ej: 19/10/26 -> Octubre)
+    dt2 = pd.to_datetime(s_clean, format="%d/%m/%y", errors="coerce")
+    
+    # 3. Formato compacto YYYYMMDD o ISO
+    dt3 = pd.to_datetime(s_clean, format="%Y%m%d", errors="coerce")
+    dt4 = pd.to_datetime(s_clean, format="%Y-%m-%d", errors="coerce")
+    
+    # 4. Formato serial numérico de Excel
+    s_num = pd.to_numeric(s_clean.str.replace(",", "."), errors="coerce")
+    mask_ex = s_num.notna() & (s_num > 30000) & (s_num < 70000)
+    dt_ex = pd.Series(pd.NaT, index=serie_fechas.index, dtype='datetime64[ns]')
+    if mask_ex.any():
+        dt_ex[mask_ex] = pd.to_datetime(s_num[mask_ex], unit="D", origin="1899-12-30", errors="coerce")
+        
+    dt_final = dt1.fillna(dt2).fillna(dt3).fillna(dt4).fillna(dt_ex)
+    meses = dt_final.dt.month.fillna(0).astype(int)
+    
+    # Respaldo textual
+    mask_cero = (meses == 0)
+    if mask_cero.any():
+        partes = s_clean[mask_cero].str.split(r"[/.-]", expand=True)
+        if partes.shape[1] >= 2:
+            mes_candidato = pd.to_numeric(partes[1], errors="coerce").fillna(0).astype(int)
+            valido = (mes_candidato >= 1) & (mes_candidato <= 12)
+            for idx_m in partes[valido].index:
+                meses.at[idx_m] = int(mes_candidato.at[idx_m])
+                
+    return meses
+
 @st.cache_data
 def cargar_datos_sla():
     if os.path.exists("Tablero_SLA_Pedidos.parquet"):
@@ -162,52 +200,87 @@ def cargar_datos_sla():
         return df_sla, df_rect
     return pd.DataFrame(), pd.DataFrame()
 
-@st.cache_data
-def cargar_datos_anulaciones(df_sla=None, df_rect=None):
+@st.cache_data(show_spinner=False)
+def cargar_datos_anulaciones(_df_sla=None, _df_rect=None):
     df_a = pd.DataFrame()
-    if os.path.exists("Tablero_Anulaciones_Detalle.parquet"):
-        df_a = pd.read_parquet("Tablero_Anulaciones_Detalle.parquet")
-    else:
-        archivos = [f for f in os.listdir(".") if ("anula" in f.lower() or "causa" in f.lower()) and f.endswith(".csv")]
-        if not archivos and os.path.exists("Datos_mensuales"):
-            archivos = [os.path.join("Datos_mensuales", f) for f in os.listdir("Datos_mensuales") if ("anula" in f.lower() or "causa" in f.lower()) and f.endswith(".csv")]
-        
-        if archivos:
+    archivos_csv = [f for f in os.listdir(".") if ("anula" in f.lower() or "causa" in f.lower()) and f.endswith(".csv")]
+    if not archivos_csv and os.path.exists("Datos_mensuales"):
+        archivos_csv = [os.path.join("Datos_mensuales", f) for f in os.listdir("Datos_mensuales") if ("anula" in f.lower() or "causa" in f.lower()) and f.endswith(".csv")]
+
+    parquet_file = "Tablero_Anulaciones_Detalle.parquet"
+    leer_desde_csv = False
+    if archivos_csv:
+        if not os.path.exists(parquet_file):
+            leer_desde_csv = True
+        else:
+            mtime_csv = os.path.getmtime(archivos_csv[0])
+            mtime_parquet = os.path.getmtime(parquet_file)
+            if mtime_csv > mtime_parquet:
+                leer_desde_csv = True
+
+    if leer_desde_csv:
+        try:
+            archivo_seleccionado = archivos_csv[0]
+            df_a = pd.read_csv(archivo_seleccionado, sep=None, engine="python", encoding="latin1", dtype=str, on_bad_lines="skip")
+            df_a.columns = df_a.columns.str.strip()
+            
+            mapa = {}
+            for c in df_a.columns:
+                clow = c.lower()
+                if "almac" in clow: mapa[c] = "Almacen"
+                elif "tienda" in clow or "sucursal" in clow: mapa[c] = "Tienda"
+                elif "pedido" in clow: mapa[c] = "Pedido"
+                elif "nota" in clow or "nro" in clow: mapa[c] = "Nota_Nro"
+                elif "fch. modif" in clow or "fch_modif" in clow or "fecha modif" in clow: mapa[c] = "Fecha_Modif"
+                elif "fech" in clow and "modif" not in clow: mapa[c] = "Fecha"
+                elif "tipo" in clow or "motivo_rect" in clow: mapa[c] = "Tipo"
+                elif "cnt" in clow or "blt" in clow or "bulto" in clow or "cant" in clow: mapa[c] = "Cant_Blt"
+                elif "imp" in clow or "monto" in clow or "importe" in clow: mapa[c] = "Monto"
+                elif "estado rp" in clow: mapa[c] = "Estado_RP"
+                elif "estado" in clow: mapa[c] = "Estado"
+                elif "motivo" in clow or "causa" in clow: mapa[c] = "Causa_Anulacion"
+                elif "lote" in clow or "rpa" in clow: mapa[c] = "Lote_RPA"
+
+            df_a = df_a.rename(columns=mapa)
+            
+            # Limpiar filas vacías del final para evitar valores flotantes/nulos que rompen los filtros
+            df_a = df_a.dropna(how="all")
+            if "Pedido" in df_a.columns:
+                df_a = df_a[df_a["Pedido"].notna() & (df_a["Pedido"].astype(str).str.strip().isin(["", "nan", "None"]) == False)]
+                df_a["Pedido"] = df_a["Pedido"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0")
+            
+            if "Tienda" in df_a.columns:
+                df_a["Tienda"] = df_a["Tienda"].fillna("").astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0")
+            if "Almacen" in df_a.columns:
+                df_a["Almacen"] = df_a["Almacen"].fillna("501").astype(str).str.strip()
+            if "Monto" in df_a.columns:
+                df_a["Monto"] = pd.to_numeric(df_a["Monto"].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
+            if "Cant_Blt" in df_a.columns:
+                df_a["Cant_Blt"] = pd.to_numeric(df_a["Cant_Blt"].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
+            
+            col_f = "Fecha" if "Fecha" in df_a.columns else ("Fecha_Modif" if "Fecha_Modif" in df_a.columns else None)
+            if col_f:
+                df_a["Mes_Num"] = normalizar_fechas_a_mes(df_a[col_f])
+                mapa_m = {1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio",
+                          7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"}
+                df_a["Nombre_Mes"] = df_a["Mes_Num"].map(mapa_m).fillna("Sin Mes")
+
             try:
-                df_a = pd.read_csv(archivos[0], sep=None, engine="python", encoding="latin1", dtype=str, on_bad_lines="skip")
-                df_a.columns = df_a.columns.str.strip()
-                
-                mapa = {}
-                for c in df_a.columns:
-                    clow = c.lower()
-                    if "almac" in clow: mapa[c] = "Almacen"
-                    elif "tienda" in clow or "sucursal" in clow: mapa[c] = "Tienda"
-                    elif "pedido" in clow: mapa[c] = "Pedido"
-                    elif "nota" in clow or "nro" in clow: mapa[c] = "Nota_Nro"
-                    elif "fch. modif" in clow or "fch_modif" in clow or "fecha modif" in clow: mapa[c] = "Fecha_Modif"
-                    elif "fech" in clow and "modif" not in clow: mapa[c] = "Fecha"
-                    elif "tipo" in clow or "motivo_rect" in clow: mapa[c] = "Tipo"
-                    elif "cnt" in clow or "blt" in clow or "bulto" in clow or "cant" in clow: mapa[c] = "Cant_Blt"
-                    elif "imp" in clow or "monto" in clow or "importe" in clow: mapa[c] = "Monto"
-                    elif "estado rp" in clow: mapa[c] = "Estado_RP"
-                    elif "estado" in clow: mapa[c] = "Estado"
-                    elif "motivo" in clow or "causa" in clow: mapa[c] = "Causa_Anulacion"
-                    elif "lote" in clow or "rpa" in clow: mapa[c] = "Lote_RPA"
+                df_a.to_parquet(parquet_file, index=False)
+            except Exception:
+                pass
+        except Exception as e:
+            if os.path.exists(parquet_file):
+                df_a = pd.read_parquet(parquet_file)
+    elif os.path.exists(parquet_file):
+        df_a = pd.read_parquet(parquet_file)
 
-                df_a = df_a.rename(columns=mapa)
-                if "Pedido" in df_a.columns: df_a["Pedido"] = df_a["Pedido"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0")
-                if "Tienda" in df_a.columns: df_a["Tienda"] = df_a["Tienda"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0")
-                if "Almacen" in df_a.columns: df_a["Almacen"] = df_a["Almacen"].astype(str).str.strip()
-                if "Monto" in df_a.columns: df_a["Monto"] = pd.to_numeric(df_a["Monto"].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
-                if "Cant_Blt" in df_a.columns: df_a["Cant_Blt"] = pd.to_numeric(df_a["Cant_Blt"].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
-            except Exception as e:
-                print(f"Error cargando respaldo anulaciones: {e}")
-
-    # ⚡ BUSCAR MAPEO DE ÁREA DIRECTAMENTE EN LOS CSVs DE ÁREA Y RESPALDOS
     if not df_a.empty and "Pedido" in df_a.columns:
-        mapa_area = {}
+        # Asegurar descarte de filas vacías
+        df_a = df_a.dropna(how="all")
+        df_a = df_a[df_a["Pedido"].notna() & (df_a["Pedido"].astype(str).str.strip().isin(["", "nan", "None"]) == False)]
 
-        # 1. Cargar diccionario de los CSVs de Área de Salida disponibles
+        mapa_area = {}
         import glob
         archivos_area = glob.glob("*[Aa]rea*[Ss]alida*.csv") + glob.glob(os.path.join("Datos_mensuales", "*[Aa]rea*[Ss]alida*.csv"))
         
@@ -215,30 +288,26 @@ def cargar_datos_anulaciones(df_sla=None, df_rect=None):
             try:
                 df_area_temp = pd.read_csv(fa, sep=None, engine="python", encoding="latin1", dtype=str, on_bad_lines="skip")
                 df_area_temp.columns = df_area_temp.columns.str.strip().str.upper()
-                
                 cols_p = [c for c in df_area_temp.columns if any(k in c for k in ["PEDIDO", "Nº DE PEDIDO", "Nº PEDIDO", "NRO_PEDIDO"])]
                 cols_a = [c for c in df_area_temp.columns if any(k in c for k in ["AREA", "ÁREA", "SALIDA", "DESCRIPCION", "SECTOR"])]
-                cols_t = [c for c in df_area_temp.columns if any(k in c for k in ["TIENDA", "SUCURSAL", "COD_SUC_DES"])]
 
                 if cols_p and cols_a:
                     col_p, col_a = cols_p[0], cols_a[0]
                     df_area_temp["Ped_Clean"] = df_area_temp[col_p].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0")
                     df_area_temp["Area_Clean"] = df_area_temp[col_a].astype(str).str.strip()
-                    
                     df_val = df_area_temp[(df_area_temp["Ped_Clean"] != "") & (~df_area_temp["Area_Clean"].isin(["", "nan", "None", "0"]))]
                     if not df_val.empty:
                         mapa_area.update(df_val.set_index("Ped_Clean")["Area_Clean"].to_dict())
             except Exception as e:
-                print(f"Error procesando CSV de área {fa}: {e}")
+                pass
 
-        # 2. Respaldos desde df_sla y df_rect
-        if df_sla is not None and not df_sla.empty and "Pedido" in df_sla.columns and "Area_Salida" in df_sla.columns:
-            for k, v in df_sla.set_index("Pedido")["Area_Salida"].to_dict().items():
+        if _df_sla is not None and not _df_sla.empty and "Pedido" in _df_sla.columns and "Area_Salida" in _df_sla.columns:
+            for k, v in _df_sla.set_index("Pedido")["Area_Salida"].to_dict().items():
                 if k not in mapa_area or mapa_area[k] == "Sin Clasificar":
                     mapa_area[k] = v
 
-        if df_rect is not None and not df_rect.empty and "Pedido" in df_rect.columns and "Area_Salida" in df_rect.columns:
-            df_r_valid = df_rect[df_rect["Area_Salida"] != "Sin Clasificar"]
+        if _df_rect is not None and not _df_rect.empty and "Pedido" in _df_rect.columns and "Area_Salida" in _df_rect.columns:
+            df_r_valid = _df_rect[_df_rect["Area_Salida"] != "Sin Clasificar"]
             if not df_r_valid.empty:
                 for k, v in df_r_valid.set_index("Pedido")["Area_Salida"].to_dict().items():
                     if k not in mapa_area or mapa_area[k] == "Sin Clasificar":
@@ -252,7 +321,6 @@ def cargar_datos_anulaciones(df_sla=None, df_rect=None):
         df_a["Area_Salida"] = df_a["Area_Salida"].replace(["", "nan", "None", "-"], "Sin Clasificar")
 
     return df_a
-
 
 @st.cache_data(show_spinner=False)
 def procesar_analisis_sustituciones_cache(_df_sla, _df_rect):
@@ -638,7 +706,6 @@ try:
             df_sla_cas_errores = df_sla_mes[df_sla_mes["Casuistica"] != "Pedido Perfecto"].copy()
             df_cas_mes = df_sla_cas_errores.groupby(["Mes_Num", "Nombre_Mes", "Casuistica"], as_index=False).agg(Cantidad_Pedidos=("Pedido", "count"))
 
-            # Calcular porcentaje de la casuística respecto al total de pedidos con error del mes
             tot_ped_error_mes = df_cas_mes.groupby(["Mes_Num", "Nombre_Mes"])["Cantidad_Pedidos"].transform("sum")
             df_cas_mes["Pct_Cas_Mes"] = (df_cas_mes["Cantidad_Pedidos"] / tot_ped_error_mes * 100.0).fillna(0.0)
             df_cas_mes["Etiqueta_Barra"] = df_cas_mes.apply(lambda r: f"<b>{int(r['Cantidad_Pedidos']):,}</b><br>({r['Pct_Cas_Mes']:.1f}%)", axis=1)
@@ -727,7 +794,6 @@ try:
 
             st.markdown("---")
             st.markdown("### 📈 Distribución de rectificaciones por casuística")
-            # Excluir Pedido Perfecto para analizar exclusivamente la distribución de pedidos rectificados
             df_sla_tab1_cas = df_sla[df_sla["Casuistica"].astype(str).str.strip() != "Pedido Perfecto"].copy()
             df_sla_tab1_cas["Casuistica"] = df_sla_tab1_cas["Casuistica"].astype(str).str.strip()
             tot_p_rect = len(df_sla_tab1_cas)
@@ -738,7 +804,6 @@ try:
             )
             cas_sum["% Participación Pedidos"] = (cas_sum["Pedidos_Totales"] / tot_p_rect) * 100.0 if tot_p_rect > 0 else 0.0
 
-            # CALCULAR EL % DE ACEPTACIÓN (Líneas Confirmadas M / Líneas Grabadas Totales) POR CASUÍSTICA
             if not df_rect.empty and "Pedido" in df_rect.columns:
                 pedidos_por_cas = df_sla_tab1_cas.set_index("Pedido")["Casuistica"].to_dict()
                 df_rect_cas_temp = df_rect.copy()
@@ -763,7 +828,8 @@ try:
                 "Falta/Sobra", "Faltante Neto", "Formato no entregado", "Error facturación master", 
                 "Etiquetas Cambiadas"
             ]
-            cas_sum["Casuistica_Cat"] = pd.Categorical(cas_sum["Casuistica"], categories=orden_cas, ordered=True)
+            casuisticas_cat = pd.Categorical(cas_sum["Casuistica"], categories=orden_cas, ordered=True)
+            cas_sum["Casuistica_Cat"] = casuisticas_cat
             cas_sum = cas_sum.sort_values("Casuistica_Cat").drop(columns=["Casuistica_Cat"]).reset_index(drop=True)
 
             cas_sum_display = cas_sum.rename(columns={
@@ -818,12 +884,12 @@ try:
                         df_resp_grp["Líneas Confirmadas"] = 0
                         df_resp_grp["% Aceptación"] = 100.0
 
-                    df_resp_grp = df_resp_grp.sort_values(by=["Puntaje SLA", "Pedidos_Totales"], ascending=[False, False]).reset_index(drop=True)
+                    df_resp_grp = df_resp_grp.sort_values(by=["Puntaje SLA", "Pedidos_Totales"], ascending=[True, True]).reset_index(drop=True)
 
                     st.dataframe(
                         df_resp_grp[[
-                            "Responsable_Tienda", "Tiendas_Asignadas", "Pedidos_Totales", "Puntaje SLA",
-                            "Pedidos_Rectificados", "% Pedidos con Rectificación", "Líneas Confirmadas", "% Aceptación"
+                            "Responsable_Tienda", "Tiendas_Asignadas", "Pedidos_Totales",
+                            "Pedidos_Rectificados", "% Pedidos con Rectificación", "Líneas Confirmadas", "% Aceptación", "Puntaje SLA"
                         ]].rename(columns={
                             "Responsable_Tienda": "Franquiciado / Supervisor",
                             "Tiendas_Asignadas": "Tiendas",
@@ -835,17 +901,15 @@ try:
                             "Franquiciado / Supervisor": st.column_config.Column("Franquiciado / Supervisor", width="large"),
                             "Tiendas": st.column_config.NumberColumn("Tiendas", format="%d", width="small"),
                             "Pedidos Totales": st.column_config.NumberColumn("Pedidos Totales", format="%d", width="small"),
-                            "Puntaje SLA": st.column_config.NumberColumn("Puntaje SLA", format="%.2f ⭐", width="medium"),
                             "Pedidos Rectificados": st.column_config.NumberColumn("Pedidos Rectificados", format="%d", width="small"),
                             "% Pedidos con Rectificación": st.column_config.NumberColumn("% Pedidos Rectificados", format="%.1f %%", width="medium"),
                             "Líneas Confirmadas": st.column_config.NumberColumn("Líneas Conf.", format="%d", width="small"),
-                            "% Aceptación": st.column_config.NumberColumn("% Aceptación", format="%.1f %%", width="small")
+                            "% Aceptación": st.column_config.NumberColumn("% Aceptación", format="%.1f %%", width="small"),
+                            "Puntaje SLA": st.column_config.NumberColumn("Puntaje SLA", format="%.2f ⭐", width="medium")
                         }
                     )
                 else:
                     st.info("ℹ️ No hay datos disponibles de franquiciados/supervisores para la selección actual.")
-
-
 
         with tab2:
                 st.subheader("🏪 Detalle de Rectificaciones por Tienda")
@@ -873,7 +937,6 @@ try:
                 if t_sel == "Ninguna":
                     st.info("👈 Selecciona una **Tienda** específica o la opción **'Todas las Tiendas'** para desplegar el resumen consolidado y detalle de rectificaciones.")
                 else:
-                    # 1. Filtrado de datos por Tienda
                     if t_sel == "Todas las Tiendas":
                         df_aud_sla = df_sla.copy()
                         df_aud_rect = df_rect.copy() if not df_rect.empty else pd.DataFrame()
@@ -881,14 +944,12 @@ try:
                         df_aud_sla = df_sla[df_sla["Tienda"].astype(str) == str(t_sel)].copy()
                         df_aud_rect = df_rect[df_rect["Tienda"].astype(str) == str(t_sel)].copy() if not df_rect.empty else pd.DataFrame()
     
-                    # 2. Filtrado por Casuística Seleccionada
                     if cas_sel_tab2 != "Todas las Casuísticas":
                         df_aud_sla = df_aud_sla[df_aud_sla["Casuistica"] == cas_sel_tab2]
                         if not df_aud_rect.empty:
                             pedidos_cas_filtrados = set(df_aud_sla["Pedido"].dropna().unique())
                             df_aud_rect = df_aud_rect[df_aud_rect["Pedido"].isin(pedidos_cas_filtrados)]
     
-                    # CALCULO DE METRICAS SUPERIORES DE SUCURSAL
                     tot_p_t = len(df_aud_sla)
                     tot_p_rect_t = (df_aud_sla["Casuistica"] != "Pedido Perfecto").sum()
                     pts_posibles_t = tot_p_t * 10.0
@@ -915,7 +976,6 @@ try:
                         monto_grabado_tot = 0.0
                         monto_confirmado_tot = 0.0
     
-                    # MOSTRAR 5 METRICAS CLAVE REORGANIZADAS
                     k1, k2, k3, k4, k5 = st.columns(5)
                     k1.metric("⭐ Puntaje SLA Tienda", f"{nota_sla_t:.2f} / 10.0")
                     k2.metric("📦 Pedidos Recibidos", f"{tot_p_t:,}")
@@ -924,8 +984,6 @@ try:
                     k5.metric("💰 Monto Confirmado", f"${monto_confirmado_tot:,.0f}", delta=f"de ${monto_grabado_tot:,.0f} Rectificados")
     
                     st.markdown("---")
-    
-                    # REGLA 1 & 2 & 3: TARJETAS DE DESGROSE DE ESTADOS DE RECTIFICACIÓN
                     st.markdown("### 📊 Desglose de Estados de Rectificación e Impacto Monetario")
                     e1, e2, e3 = st.columns(3)
                     e1.metric("✅ Confirmadas / Aprobadas (Estado M)", f"{lin_m:,}", help="Líneas confirmadas y aceptadas")
@@ -983,7 +1041,6 @@ try:
                             df_pedidos_rect_tienda["Unidades Faltantes"] = 0
                             df_pedidos_rect_tienda["Unidades Sobrantes"] = 0
     
-                        # REGLA 5: MOVER LÍNEAS TOTALES HACIA ADELANTE EN LA TABLA
                         df_pedidos_rect_tienda_disp = df_pedidos_rect_tienda[[
                             "Tienda", "Pedido", "Líneas Totales", "Casuistica", 
                             "Líneas Faltantes", "Líneas Sobrantes", 
@@ -1039,7 +1096,7 @@ try:
                         busqueda_pedido = st.text_input("🔍 Filtrar exclusivamente por Número de Pedido:", "", key="txt_ped_h3_val")
                         if busqueda_pedido:
                             df_aud_rect = df_aud_rect[
-                                df_aud_rect["Pedido"].astype(str).str.contains(busqueda_pedido.strip(), case=False, na=False)
+                                df_aud_rect["Pedido"].astype(str).str.contains(busqueda_ped_pedido.strip(), case=False, na=False)
                             ]
     
                         col_motivo = "Motivo_Clean" if "Motivo_Clean" in df_aud_rect.columns else ("Motivo" if "Motivo" in df_aud_rect.columns else None)
@@ -1073,7 +1130,6 @@ try:
                             cols_rect_disp.append(col_unid_abon)
     
                         cols_rect_disp.append("Monto_Signed")
-                        
                         cols_rect_exist = [c for c in cols_rect_disp if c in df_aud_rect.columns]
     
                         df_aud_rect_disp = df_aud_rect[cols_rect_exist].copy()
@@ -1150,13 +1206,11 @@ try:
 
             if not df_sust_analisis.empty:
 
-                    # 1. MOSTRAR VALOR TOTAL GENERAL (SIN FILTRAR POR ESTADO)
                     tot_pedidos_sust_all = int(df_sust_analisis["Pedido"].nunique())
                     tot_monto_falta_bruto = float(df_sust_analisis["Monto Faltante ($)"].sum())
                     tot_monto_sobra_bruto = float(df_sust_analisis["Monto Sobrante ($)"].sum())
                     tot_diferencia_bruta = float(df_sust_analisis["Diferencia Monto Neto ($)"].sum())
 
-                    
                     k1_s, k2_s, k3_s, k4_s = st.columns(4)
                     k1_s.metric("📦 Total Pedidos Sustitución", f"{tot_pedidos_sust_all:,}")
                     k2_s.metric("💸 Importe Faltante ($)", f"${tot_monto_falta_bruto:,.0f}")
@@ -1165,7 +1219,6 @@ try:
 
                     st.markdown("---")
 
-                    # 2. SUBSECCIÓN DE MONTOS CONFIRMADOS Y ACEPTACIÓN
                     lin_m_sust = (df_sust_analisis["Estado Falta"] == "M").sum() + (df_sust_analisis["Estado Sobra"] == "M").sum()
                     lin_r_sust = (df_sust_analisis["Estado Falta"] == "R").sum() + (df_sust_analisis["Estado Sobra"] == "R").sum()
                     lin_p_sust = (df_sust_analisis["Estado Falta"] == "P").sum() + (df_sust_analisis["Estado Sobra"] == "P").sum()
@@ -1190,10 +1243,7 @@ try:
                         tot_lin_t = len(grp_t) * 2
                         pct_acep_t = (lin_m_t / tot_lin_t * 100.0) if tot_lin_t > 0 else 100.0
                         
-                        # Cálculo de la diferencia monto neto con rectificaciones confirmadas
                         monto_neto_conf_t = grp_t["Diferencia Neta Confirmada ($)"].sum()
-                        
-                        # % de pedidos con diferencia confirmada a favor de la tienda (> 0)
                         ped_netos_t = grp_t.groupby("Pedido")["Diferencia Neta Confirmada ($)"].sum()
                         ped_a_favor_t = (ped_netos_t > 0).sum()
                         pct_favor_t = (ped_a_favor_t / tot_ped_t * 100.0) if tot_ped_t > 0 else 0.0
@@ -1241,7 +1291,6 @@ try:
                     if busqueda_pedido_sust:
                         df_sust_analisis_filtrada = df_sust_analisis_filtrada[df_sust_analisis_filtrada["Pedido"].astype(str).str.contains(busqueda_pedido_sust.strip(), case=False, na=False)]
 
-                    # 3. DETALLE FINAL DE ESTADOS EN LA PARTE INFERIOR
                     st.markdown("### 🔎 Detalle de Rectificaciones de Sustitución y Estados", help="Rectificaciones por sustitución misma familia y diferente familia (Estado: Confirmado, Rechazado y Pendiente)")
                     st.caption("Detalle de sustituciones misma y diferente familia, comparando el costo del faltante y sobrante y el estado de cada rectificación.")
 
@@ -1285,7 +1334,6 @@ try:
             if not df_rect.empty:
                 df_r_area_base = df_rect.copy()
 
-                # Filtro por Tienda en Hoja 4
                 tiendas_area_opt = ["Todas las Tiendas"] + sorted([str(x) for x in df_r_area_base["Tienda"].dropna().unique() if str(x) != "nan"]) if "Tienda" in df_r_area_base.columns else ["Todas las Tiendas"]
                 t_area_sel = st.selectbox("Filtrar por Tienda:", tiendas_area_opt, index=0)
 
@@ -1306,15 +1354,9 @@ try:
 
                 col_est_tab4 = "Estado_Clean" if "Estado_Clean" in df_r_area_base.columns else ("Estado" if "Estado" in df_r_area_base.columns else None)
                 df_r_area_base["Estado_Norm"] = df_r_area_base[col_est_tab4].astype(str).str.strip().str.upper() if col_est_tab4 else "M"
-
-                # Normalizar estados en detalle: 'M' -> 'C' (Confirmada), 'P' -> 'P' (Pendiente), 'R' -> 'R' (Rechazada)
                 df_r_area_base["Estado_PRC"] = df_r_area_base["Estado_Norm"].replace({"M": "C"})
 
-                # ==============================================================
-                # 1. ANÁLISIS DE RECTIFICACIONES CONFIRMADAS (ESTADO 'M' / 'C')
-                # ==============================================================
                 df_r_area_conf = df_r_area_base[df_r_area_base["Estado_Norm"] == "M"].copy()
-
                 df_r_area_conf["Monto_Falta"] = df_r_area_conf.apply(lambda r: abs(float(r["Monto_Rectif"])) if r["Motivo_Norm"] == "F" else 0.0, axis=1)
                 df_r_area_conf["Monto_Sobra"] = df_r_area_conf.apply(lambda r: -abs(float(r["Monto_Rectif"])) if r["Motivo_Norm"] == "S" else 0.0, axis=1)
                 df_r_area_conf["Monto_Confirmado"] = df_r_area_conf["Monto_Falta"] + df_r_area_conf["Monto_Sobra"]
@@ -1341,7 +1383,6 @@ try:
 
                 col_g1, col_g2 = st.columns(2)
 
-                # GRÁFICO 1: MONTO NETO CONFIRMADO ($)
                 with col_g1:
                     tb_area_graf_monto = tb_area_graf.sort_values(by="Monto_Confirmado", ascending=False).reset_index(drop=True)
                     tb_area_graf_monto["Monto_Texto"] = tb_area_graf_monto["Monto_Confirmado"].apply(lambda x: f"${x:,.0f}")
@@ -1361,7 +1402,6 @@ try:
                     )
                     st.plotly_chart(fig_area_monto, use_container_width=True)
 
-                # GRÁFICO 2: CANTIDAD DE LÍNEAS CONFIRMADAS POR SECTOR
                 with col_g2:
                     tb_area_graf_lineas = tb_area_graf.sort_values(by="Lineas_Rectificadas", ascending=False).reset_index(drop=True)
 
@@ -1496,7 +1536,6 @@ try:
 
                 col_art_s = "Artículo" if "Artículo" in df_sueltas.columns else ("SKU" if "SKU" in df_sueltas.columns else "Producto")
                 
-                # Calcular flag de unidad suelta sobre la totalidad de líneas grabadas
                 if "Es_Unidad_Suelta" not in df_sueltas.columns:
                     col_unid_s = "Unidades_Num" if "Unidades_Num" in df_sueltas.columns else "Pedido"
                     col_uxb_s = "UxB" if "UxB" in df_sueltas.columns else None
@@ -1505,10 +1544,7 @@ try:
                     else:
                         df_sueltas["Es_Unidad_Suelta"] = False
 
-                # Total de líneas de unidades sueltas (conserva R, M y P)
                 df_sueltas_all = df_sueltas[df_sueltas["Es_Unidad_Suelta"] == True].copy()
-
-                # Líneas de unidades sueltas confirmadas exclusivamente (Estado 'M') para los KPIs
                 df_sueltas_conf = df_sueltas_all[df_sueltas_all["Estado_Norm"] == "M"].copy()
 
                 tot_lineas_sueltas = len(df_sueltas_conf)
@@ -1525,7 +1561,6 @@ try:
                 st.markdown("---")
 
                 if not df_sueltas_all.empty:
-                    # TOP 15 TIENDAS CON MONTO CONFIRMADO Y % DE ACEPTACIÓN
                     st.markdown(
                         "### 🏆 Top 15 Tiendas con Mayor Cantidad de Líneas de Unidades Sueltas",
                         help="El Monto Total refleja exclusivamente las rectificaciones confirmadas (Estado 'M'). El % de Aceptación representa la proporción de líneas confirmadas sobre el total de unidades sueltas grabadas por la tienda."
@@ -1571,7 +1606,6 @@ try:
                     )
 
                     st.markdown("---")
-                    # DETALLE INDIVIDUAL CONSERVANDO ESTADOS R, M Y P
                     st.markdown(
                         "### 🔎 Detalle Individual de Líneas Rectificadas como Unidades Sueltas",
                         help="Detalle completo de líneas de unidades sueltas incluyendo estados: M (Confirmada), P (Pendiente) y R (Rechazada)."
@@ -1643,7 +1677,7 @@ try:
                 st.info("ℹ️ No hay rectificaciones disponibles para controlar unidades sueltas.")
 
         with tab6:
-            st.subheader("❌ Rectificaciones del Portal: Análisis de Causas Anuladas y Aprobadas \nRectificaciones Anuladas y Aprobadas")
+            st.subheader("❌ Rectificaciones del Portal: Análisis de Causas Anuladas y Aprobadas")
             st.markdown("Analisis independiente fuera del cálculo del SLA basada exclusivamente en los datos del portal de rectificaciones. Esta vista procesa la totalidad de las rectificaciones Anuladas y Aprobadas, analizando sus motivos registrados y su distribución por Almacén, Área de Salida, Tienda y Mes.")
 
             if not df_anul.empty:
@@ -1663,21 +1697,34 @@ try:
                 df_portal_csv["Area_Salida"] = df_portal_csv["Area_Salida"].fillna("Sin Clasificar").astype(str).str.strip()
                 df_portal_csv["Area_Salida"] = df_portal_csv["Area_Salida"].replace(["", "nan", "None", "-"], "Sin Clasificar")
 
-                # Normalización de mes
-                if "Fecha" in df_portal_csv.columns:
-                    f_str_p = df_portal_csv["Fecha"].astype(str).str.strip()
-                    f_dt_p = pd.to_datetime(f_str_p, format="%Y%m%d", errors="coerce")
-                    mask_p_na = f_dt_p.isna()
-                    if mask_p_na.any():
-                        f_dt_p[mask_p_na] = pd.to_datetime(f_str_p[mask_p_na], dayfirst=True, errors="coerce")
-                    df_portal_csv["Mes_Num"] = f_dt_p.dt.month.fillna(0).astype(int)
-                elif "Fecha_Modif" in df_portal_csv.columns:
-                    f_str_p = df_portal_csv["Fecha_Modif"].astype(str).str.strip()
-                    f_dt_p = pd.to_datetime(f_str_p, format="%Y%m%d", errors="coerce")
-                    mask_p_na = f_dt_p.isna()
-                    if mask_p_na.any():
-                        f_dt_p[mask_p_na] = pd.to_datetime(f_str_p[mask_p_na], dayfirst=True, errors="coerce")
-                    df_portal_csv["Mes_Num"] = f_dt_p.dt.month.fillna(0).astype(int)
+                # Normalización de mes probada (soporta explícitamente %d/%m/%Y y %d/%m/%y para 19/10/26 de Octubre)
+                col_fec_eval = "Fecha" if ("Fecha" in df_portal_csv.columns and df_portal_csv["Fecha"].notna().any()) else ("Fecha_Modif" if "Fecha_Modif" in df_portal_csv.columns else None)
+                if col_fec_eval:
+                    s_fec_raw = df_portal_csv[col_fec_eval].astype(str).str.strip().str.replace(".0", "", regex=False)
+                    dt_4dig = pd.to_datetime(s_fec_raw, format="%d/%m/%Y", errors="coerce")
+                    dt_2dig = pd.to_datetime(s_fec_raw, format="%d/%m/%y", errors="coerce")
+                    dt_ymd = pd.to_datetime(s_fec_raw, format="%Y%m%d", errors="coerce")
+                    
+                    s_num = pd.to_numeric(s_fec_raw.str.replace(",", "."), errors="coerce")
+                    mask_excel = s_num.notna() & (s_num > 30000) & (s_num < 70000)
+                    dt_ex = pd.Series(pd.NaT, index=df_portal_csv.index, dtype='datetime64[ns]')
+                    if mask_excel.any():
+                        dt_ex[mask_excel] = pd.to_datetime(s_num[mask_excel], unit="D", origin="1899-12-30", errors="coerce")
+                    
+                    dt_res = dt_4dig.fillna(dt_2dig).fillna(dt_ymd).fillna(dt_ex)
+                    meses_res = dt_res.dt.month.fillna(0).astype(int)
+                    
+                    # Respaldo por partes de fecha
+                    mask_cero = (meses_res == 0)
+                    if mask_cero.any():
+                        partes = s_fec_raw[mask_cero].str.split(r"[/.-]", expand=True)
+                        if partes.shape[1] >= 2:
+                            m_cand = pd.to_numeric(partes[1], errors="coerce").fillna(0).astype(int)
+                            val = (m_cand >= 1) & (m_cand <= 12)
+                            for idx_v in partes[val].index:
+                                meses_res.at[idx_v] = int(m_cand.at[idx_v])
+                    
+                    df_portal_csv["Mes_Num"] = meses_res
                 else:
                     df_portal_csv["Mes_Num"] = 0
 
@@ -2332,7 +2379,7 @@ try:
 * **Estado 'R'**: Rectificación Rechazada / Anulada.
 * **UxB**: Unidades por Bulto / Caja estándar.
 * **BxM**: Bultos por Bulto Máster.
-* **UxM**: Unidades Totales por Bulto Máster ($UxM = UxB \times BxM$).
+* **UxM**: Unidades Totales por Bulto Máster ($UxM = UxB 	imes BxM$).
             """)
 
 except Exception as e:
