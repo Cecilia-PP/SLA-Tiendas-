@@ -2354,15 +2354,60 @@ try:
             st.markdown("### 📋 Reglas de Puntaje y Evaluación SLA por Pedido")
             
             matriz_p = pd.DataFrame([
-                {"Casuística Operativa": "Pedido Perfecto", "Descuento Aplicado": "0.0 Pts", "Descripción": "Pedido sin rectificaciones"},
-                {"Casuística Operativa": "Sobrante Neto", "Descuento Aplicado": "0.0 Pts", "Descripción": "Pedido con rectificación de sobra"},
-                {"Casuística Operativa": "Sustitución Misma Subfamilia", "Descuento Aplicado": "-2.5 Pts", "Descripción": "Pedido con rectificación de falta y sobra en artículos de igual subfamilia"},
-                {"Casuística Operativa": "Sustitución Distinta Subfamilia", "Descuento Aplicado": "-4.5 Pts", "Descripción": "Pedido con rectificación de falta y sobra en artículos de distintas subfamilias"},
-                {"Casuística Operativa": "Falta/Sobra", "Descuento Aplicado": "-5.5 Pts", "Descripción": "Pedido con rectificación de falta y sobra"},
-                {"Casuística Operativa": "Faltante Neto", "Descuento Aplicado": "-6.0 Pts", "Descripción": "Pedido con rectificación de solo falta"},
-                {"Casuística Operativa": "Formato no entregado", "Descuento Aplicado": "-6.0 Pts", "Descripción": "Pedido con rectificación de solo falta de más de 10 líneas"},
-                {"Casuística Operativa": "Error facturación master", "Descuento Aplicado": "-6.0 Pts", "Descripción": "Pedido con rectificación de falta en bultos Master"},
-                {"Casuística Operativa": "Etiquetas Cambiadas", "Descuento Aplicado": "-10.0 Pts", "Descripción": "Faltas y sobras simultáneas mayores o iguales a 12 líneas rectificadas"}
+                {
+                    "Casuística Operativa": "Pedido Perfecto",
+                    "Descuento Aplicado": "0.0 Pts",
+                    "Descripción": "Pedido sin rectificaciones",
+                    "Lógica y Límites": ""
+                },
+                {
+                    "Casuística Operativa": "Sobrante Neto",
+                    "Descuento Aplicado": "0.0 Pts",
+                    "Descripción": "Pedido con rectificación de sobra",
+                    "Lógica y Límites": "Solo sobra"
+                },
+                {
+                    "Casuística Operativa": "Sustitución Misma Subfamilia",
+                    "Descuento Aplicado": "-2.5 Pts",
+                    "Descripción": "Pedido con rectificación de falta y sobra en artículos de igual subfamilia",
+                    "Lógica y Límites": "Igual cantidad de lineas S=F misma sub familia < a 12 lineas"
+                },
+                {
+                    "Casuística Operativa": "Sustitución Distinta Subfamilia",
+                    "Descuento Aplicado": "-4.5 Pts",
+                    "Descripción": "Pedido con rectificación de falta y sobra en artículos de distintas subfamilias",
+                    "Lógica y Límites": "Igual cantidad de lineas S=F distinta sub familia  < a 12 lineas"
+                },
+                {
+                    "Casuística Operativa": "Falta/Sobra",
+                    "Descuento Aplicado": "-5.5 Pts",
+                    "Descripción": "Pedido con rectificación de falta y sobra",
+                    "Lógica y Límites": "S y F < a 12 lineas no equitativas"
+                },
+                {
+                    "Casuística Operativa": "Faltante Neto",
+                    "Descuento Aplicado": "-6.0 Pts",
+                    "Descripción": "Pedido con rectificación de solo falta",
+                    "Lógica y Límites": "< 10 lineas solo F"
+                },
+                {
+                    "Casuística Operativa": "Formato no entregado",
+                    "Descuento Aplicado": "-6.0 Pts",
+                    "Descripción": "Pedido con rectificación de solo falta de más de 10 líneas",
+                    "Lógica y Límites": "> 10 lineas solo F"
+                },
+                {
+                    "Casuística Operativa": "Error facturación master",
+                    "Descuento Aplicado": "-6.0 Pts",
+                    "Descripción": "Pedido con rectificación de falta en bultos Master",
+                    "Lógica y Límites": "Solo master,la cantidad rectificada coincide con múltiplos de caja máster o diferencia máster"
+                },
+                {
+                    "Casuística Operativa": "Etiquetas Cambiadas",
+                    "Descuento Aplicado": "-10.0 Pts",
+                    "Descripción": "Faltas y sobras simultáneas mayores o iguales a 12 líneas rectificadas",
+                    "Lógica y Límites": "S y F > a 12 lineas no equitativas"
+                }
             ])
             st.dataframe(
                 matriz_p,
@@ -2370,7 +2415,8 @@ try:
                 column_config={
                     "Casuística Operativa": st.column_config.Column("Casuística Operativa", width="medium"),
                     "Descuento Aplicado": st.column_config.Column("Descuento Aplicado", width="small"),
-                    "Descripción": st.column_config.Column("Descripción", width="large")
+                    "Descripción": st.column_config.Column("Descripción", width="large"),
+                    "Lógica y Límites": st.column_config.Column("Lógica y Límites", width="large")
                 }
             )
 
