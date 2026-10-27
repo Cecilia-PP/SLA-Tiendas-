@@ -346,7 +346,7 @@ try:
             keys_a_limpiar = [
                 "sb_alm", "sb_gest", "sb_resp", "sb_tienda", "sb_area", "sb_cas",
                 "sb_est", "sb_fam", "sb_subfam", "sb_anio", "sb_mes",
-                "h6_flt_alm", "h6_flt_causa_anul", "h6_flt_causa_aprob", "h6_flt_tienda", "txt_ped_portal"
+                "h6_flt_alm", "h6_flt_causa_anul", "h6_flt_causa_aprob", "h6_flt_tienda", "h6_flt_motivo", "txt_ped_portal"
             ]
             for k in keys_a_limpiar:
                 if k in st.session_state:
@@ -1965,8 +1965,9 @@ try:
                 st.markdown("### 🔎 Detalle Individual de Reclamos del Portal")
 
                 tiendas_portal_opt = sorted([str(x) for x in df_portal_csv["Tienda"].dropna().unique() if str(x) != "nan"]) if "Tienda" in df_portal_csv.columns else []
+                motivos_portal_opt = sorted([str(x) for x in df_portal_csv["Motivo_Norm"].dropna().unique() if str(x).strip() != ""]) if "Motivo_Norm" in df_portal_csv.columns else []
                 
-                col_tp1, col_tp2 = st.columns([2.5, 1.5])
+                col_tp1, col_tp2, col_tp3 = st.columns([1.5, 1.5, 1.0])
                 with col_tp1:
                     t_portal_sel = st.multiselect(
                         "🏪 Filtrar por Tienda(s) del Portal:",
@@ -1978,12 +1979,25 @@ try:
                     )
 
                 with col_tp2:
-                    busqueda_ped_portal = st.text_input("🔍 Filtrar por Número de Pedido:", "", key="txt_ped_portal")
+                    motivo_portal_sel = st.multiselect(
+                        "📋 Filtrar por Motivo / Causa:",
+                        options=motivos_portal_opt,
+                        default=[],
+                        placeholder="Todos los Motivos / Causas",
+                        key="h6_flt_motivo",
+                        help="Escribe o selecciona uno o varios motivos/causas del portal. Si está vacío, se muestran todos."
+                    )
+
+                with col_tp3:
+                    busqueda_ped_portal = st.text_input("🔍 Filtrar por Pedido:", "", key="txt_ped_portal")
 
                 df_portal_view = df_portal_csv.copy()
 
                 if t_portal_sel and "Tienda" in df_portal_view.columns:
                     df_portal_view = df_portal_view[df_portal_view["Tienda"].astype(str).isin(t_portal_sel)]
+
+                if motivo_portal_sel and "Motivo_Norm" in df_portal_view.columns:
+                    df_portal_view = df_portal_view[df_portal_view["Motivo_Norm"].astype(str).isin(motivo_portal_sel)]
 
                 if busqueda_ped_portal.strip() and "Pedido" in df_portal_view.columns:
                     df_portal_view = df_portal_view[df_portal_view["Pedido"].astype(str).str.contains(busqueda_ped_portal.strip(), case=False, na=False)]
