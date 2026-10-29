@@ -68,6 +68,19 @@ def corregir_encoding_texto(texto):
     except (UnicodeEncodeError, UnicodeDecodeError):
         return s
 
+def formatear_cantidades_limpias(val):
+    if pd.isna(val):
+        return ""
+    try:
+        f = float(str(val).replace(",", "."))
+        r = round(f, 2)
+        if r == int(r):
+            return f"{int(r)}"
+        else:
+            return f"{r:.2f}"
+    except Exception:
+        return str(val)
+
 def normalizar_fechas_a_mes(serie_fechas):
     if serie_fechas is None or serie_fechas.empty:
         return pd.Series(0, index=serie_fechas.index if serie_fechas is not None else [], dtype=int)
@@ -247,30 +260,49 @@ def cargar_datos_sla():
                     df_rect["Gestion"] = df_rect["Tienda"].map(mapa_gest).fillna("Sin Clasificar")
                     df_rect["Gestion"] = df_rect["Gestion"].replace(["-", "--", "- ", "", "nan", "None"], "Sin Clasificar")
 
-            # ⚡ ENRIQUECIMIENTO EN CALIENTE SI UxB O BULFM NO VIENEN EN EL PARQUET
-            necesita_maestro = ("UxB" not in df_rect.columns) or (pd.to_numeric(df_rect.get("UxB", 1.0), errors="coerce").fillna(1.0) > 1.0).sum() == 0
+            # ⚡ ENRIQUECIMIENTO EN CALIENTE SI UxB O BxM NO VIENEN EN EL PARQUET
+            necesita_maestro = ("UxB" not in df_rect.columns) or ("BULFM" not in df_rect.columns) or (pd.to_numeric(df_rect.get("UxB", 1.0), errors="coerce").fillna(1.0) > 1.0).sum() == 0
             if necesita_maestro and "Artículo" in df_rect.columns:
                 import glob
-                m_archivos = glob.glob("*[Mm]aestro*.csv") + glob.glob(os.path.join("Datos_mensuales", "*[Mm]aestro*.csv"))
+                m_archivos = sorted(list(set(glob.glob("*[Mm]aestro*.csv") + glob.glob(os.path.join("Datos_mensuales", "*[Mm]aestro*.csv")))))
+                uxb_archivos = sorted(list(set(glob.glob("*[Uu][Xx][Bb]*.csv") + glob.glob(os.path.join("Datos_mensuales", "*[Uu][Xx][Bb]*.csv")))))
+                df_rect["Art_Key"] = df_rect["Artículo"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
+                
+                # 1. Bandera Es_Master desde Maestro.csv (Bulto Master == 1)
                 if m_archivos:
                     try:
                         df_m_app = pd.read_csv(m_archivos[0], sep=None, engine="python", encoding="latin1", dtype=str, on_bad_lines="skip")
                         df_m_app.columns = df_m_app.columns.str.strip().str.upper()
                         col_s = next((c for c in df_m_app.columns if any(k in c for k in ["ARTICULO", "ARTÍCULO", "SKU", "COD_ART"])), None)
-                        col_u = next((c for c in df_m_app.columns if "UXB" in c or "BULTO" in c or "CAJA" in c), None)
-                        col_b = next((c for c in df_m_app.columns if "BULFM" in c or "BXM" in c or "MASTER" in c), None)
-                        if col_s:
+                        col_flag = next((c for c in df_m_app.columns if any(k in c for k in ["BULTO MASTER", "BULFM", "MASTER"]) and "DESC" not in c), None)
+                        if col_s and col_flag:
                             df_m_app["Art_Key"] = df_m_app[col_s].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
-                            df_rect["Art_Key"] = df_rect["Artículo"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
-                            if col_u:
-                                m_uxb = df_m_app.set_index("Art_Key")[col_u].to_dict()
-                                df_rect["UxB"] = pd.to_numeric(df_rect["Art_Key"].map(m_uxb).astype(str).str.replace(",", "."), errors="coerce").fillna(1.0)
-                            if col_b:
-                                m_bxm = df_m_app.set_index("Art_Key")[col_b].to_dict()
-                                df_rect["BULFM"] = pd.to_numeric(df_rect["Art_Key"].map(m_bxm).astype(str).str.replace(",", "."), errors="coerce").fillna(1.0)
-                            df_rect.drop(columns=["Art_Key"], inplace=True, errors="ignore")
+                            df_m_app["Flag_Master_Val"] = pd.to_numeric(df_m_app[col_flag].astype(str).str.replace(",", "."), errors="coerce").fillna(0).astype(int)
+                            m_flag = df_m_app.drop_duplicates("Art_Key").set_index("Art_Key")["Flag_Master_Val"].to_dict()
+                            df_rect["Es_Master"] = np.where(df_rect["Art_Key"].map(m_flag).fillna(0).astype(int) == 1, "Sí", "No")
                     except Exception:
                         pass
+                
+                # 2. UxB y BxM real desde UxB 503.csv
+                if uxb_archivos:
+                    try:
+                        for fa in uxb_archivos:
+                            df_u_app = pd.read_csv(fa, sep=None, engine="python", encoding="latin1", dtype=str, on_bad_lines="skip")
+                            df_u_app.columns = df_u_app.columns.str.strip().str.upper()
+                            c_sk = next((c for c in df_u_app.columns if any(k in c for k in ["ARTICULO", "ARTÍCULO", "SKU", "COD_ART"])), df_u_app.columns[0])
+                            c_bx = next((c for c in df_u_app.columns if any(k in c for k in ["BXM", "BULTOS X MASTER", "BULTOS POR MASTER", "BULTOS MASTER", "BX_MASTER", "BX M"]) and "DESC" not in c), None)
+                            c_ux = next((c for c in df_u_app.columns if c != c_bx and any(k in c for k in ["UXB", "UNIDADES X BULTO", "UNIDADES_BULTO", "UNID", "CANT", "BULTO"]) and "MASTER" not in c), None)
+                            
+                            df_u_app["Art_Key"] = df_u_app[c_sk].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
+                            if c_ux:
+                                m_ux = df_u_app.dropna(subset=[c_ux]).drop_duplicates("Art_Key").set_index("Art_Key")[c_ux].to_dict()
+                                df_rect["UxB"] = pd.to_numeric(df_rect["Art_Key"].map(m_ux).astype(str).str.replace(",", "."), errors="coerce").fillna(df_rect.get("UxB", 1.0))
+                            if c_bx:
+                                m_bx = df_u_app.dropna(subset=[c_bx]).drop_duplicates("Art_Key").set_index("Art_Key")[c_bx].to_dict()
+                                df_rect["BULFM"] = pd.to_numeric(df_rect["Art_Key"].map(m_bx).astype(str).str.replace(",", "."), errors="coerce").fillna(df_rect.get("BULFM", 1.0))
+                    except Exception:
+                        pass
+                df_rect.drop(columns=["Art_Key"], inplace=True, errors="ignore")
 
             # Asegurar tipos y cálculo de unidades / master
             col_u_raw = next((c for c in ["Unid/Kgs grabados", "Unidades_Num", "Cantidad", "Cant"] if c in df_rect.columns), None)
@@ -280,9 +312,13 @@ def cargar_datos_sla():
                 df_rect["Unidades_Num"] = 1.0
 
             df_rect["UxB"] = pd.to_numeric(df_rect.get("UxB", 1.0), errors="coerce").fillna(1.0)
-            df_rect["BULFM"] = pd.to_numeric(df_rect.get("BULFM", 1.0), errors="coerce").fillna(1.0)
+            df_rect["Es_Master"] = df_rect["Es_Master"].fillna("No") if "Es_Master" in df_rect.columns else "No"
+            # ⚡ Factor BxM real (BULFM):
+            # Para artículos máster (Bulto Master == 1), conserva su BxM real de UxB 503 (ej: 2, 4, 6, 8, etc.).
+            # Para los que NO son máster, se fija en 1.0.
+            bulfm_val = pd.to_numeric(df_rect.get("BULFM", 1.0), errors="coerce").fillna(1.0)
+            df_rect["BULFM"] = np.where(df_rect["Es_Master"] == "Sí", bulfm_val, 1.0)
             df_rect["UxM"] = df_rect["UxB"] * df_rect["BULFM"]
-            df_rect["Es_Master"] = np.where(pd.to_numeric(df_rect.get("BULFM", 0), errors="coerce").fillna(0).astype(int) == 1, "Sí", "No")
             df_rect["Es_Unidad_Suelta"] = (df_rect["UxB"] > 1.0) & (df_rect["Unidades_Num"] > 0.0) & (df_rect["Unidades_Num"] < df_rect["UxB"])
 
         return df_sla, df_rect
@@ -639,6 +675,9 @@ try:
             if estado_sel_labels:
                 estados_elegidos = [mapa_label_a_val[lbl] for lbl in estado_sel_labels]
                 df_rect = df_rect[df_rect["Estado"].isin(estados_elegidos)]
+                # ⚡ Sincronizar pedidos: solo conservar pedidos que posean líneas en los estados seleccionados
+                pedidos_con_estado = set(df_rect["Pedido"].dropna().unique())
+                df_sla = df_sla[df_sla["Pedido"].isin(pedidos_con_estado)]
 
         # 8. FILTROS DEL MAESTRO
         if not df_rect.empty:
@@ -1172,8 +1211,11 @@ try:
                             df_pedidos_rect_tienda["Master No"] = df_pedidos_rect_tienda["Pedido"].map(conteo_master_no).fillna(0).astype(int)
                             df_pedidos_rect_tienda["Master Sí"] = df_pedidos_rect_tienda["Pedido"].map(conteo_master_si).fillna(0).astype(int)
     
-                            df_pedidos_rect_tienda["Unidades Faltantes"] = df_pedidos_rect_tienda["Pedido"].map(unid_f).fillna(0.0).astype(int)
-                            df_pedidos_rect_tienda["Unidades Sobrantes"] = df_pedidos_rect_tienda["Pedido"].map(unid_s).fillna(0.0).astype(int)
+                            df_pedidos_rect_tienda["Unidades Faltantes"] = df_pedidos_rect_tienda["Pedido"].map(unid_f).fillna(0.0).round(3)
+                            df_pedidos_rect_tienda["Unidades Sobrantes"] = df_pedidos_rect_tienda["Pedido"].map(unid_s).fillna(0.0).round(3)
+                            
+                            # ⚡ Excluir pedidos que no tengan líneas en la selección/estado activo
+                            df_pedidos_rect_tienda = df_pedidos_rect_tienda[df_pedidos_rect_tienda["Líneas Totales"] > 0]
                         else:
                             df_pedidos_rect_tienda["Líneas Totales"] = 0
                             df_pedidos_rect_tienda["Líneas Faltantes"] = 0
@@ -1190,6 +1232,9 @@ try:
                             "Unidades Faltantes", "Unidades Sobrantes", 
                             "Puntos_Obtenidos"
                         ]].copy()
+
+                        df_pedidos_rect_tienda_disp["Unidades Faltantes"] = df_pedidos_rect_tienda_disp["Unidades Faltantes"].apply(formatear_cantidades_limpias)
+                        df_pedidos_rect_tienda_disp["Unidades Sobrantes"] = df_pedidos_rect_tienda_disp["Unidades Sobrantes"].apply(formatear_cantidades_limpias)
     
                         df_pedidos_rect_tienda_disp = df_pedidos_rect_tienda_disp.rename(columns={
                             "Tienda": "Tienda",
@@ -1211,8 +1256,8 @@ try:
                                 "Líneas Sobrantes": st.column_config.NumberColumn("Líneas Sobrantes (S)", format="%d", width="small"),
                                 "Master No": st.column_config.NumberColumn("Master No", format="%d", width="small"),
                                 "Master Sí": st.column_config.NumberColumn("Master Sí", format="%d", width="small"),
-                                "Unidades Faltantes": st.column_config.NumberColumn("Unid. Faltantes (F)", format="%d", width="small"),
-                                "Unidades Sobrantes": st.column_config.NumberColumn("Unid. Sobrantes (S)", format="%d", width="small"),
+                                "Unidades Faltantes": st.column_config.Column("Unid. Faltantes (F)", width="small"),
+                                "Unidades Sobrantes": st.column_config.Column("Unid. Sobrantes (S)", width="small"),
                                 "Puntaje SLA (0-10)": st.column_config.NumberColumn("Puntaje SLA", format="%.1f ⭐", width="medium")
                             }
                         )
@@ -1275,6 +1320,10 @@ try:
                         cols_rect_exist = [c for c in cols_rect_disp if c in df_aud_rect.columns]
     
                         df_aud_rect_disp = df_aud_rect[cols_rect_exist].copy()
+                        if col_unid_grab and col_unid_grab in df_aud_rect_disp.columns:
+                            df_aud_rect_disp[col_unid_grab] = pd.to_numeric(df_aud_rect_disp[col_unid_grab].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
+                        if col_unid_abon and col_unid_abon in df_aud_rect_disp.columns:
+                            df_aud_rect_disp[col_unid_abon] = pd.to_numeric(df_aud_rect_disp[col_unid_abon].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
                         if "Fecha de Grabación" in df_aud_rect_disp.columns:
                             f_str = df_aud_rect_disp["Fecha de Grabación"].astype(str).str.strip()
                             f_dt = pd.to_datetime(f_str, format="%Y%m%d", errors="coerce")
@@ -1306,6 +1355,10 @@ try:
                             rename_dict_det[col_unid_abon] = "Unid. Abonadas"
     
                         df_aud_rect_disp = df_aud_rect_disp.rename(columns=rename_dict_det)
+                        if "Unid. Grabadas" in df_aud_rect_disp.columns:
+                            df_aud_rect_disp["Unid. Grabadas"] = df_aud_rect_disp["Unid. Grabadas"].apply(formatear_cantidades_limpias)
+                        if "Unid. Abonadas" in df_aud_rect_disp.columns:
+                            df_aud_rect_disp["Unid. Abonadas"] = df_aud_rect_disp["Unid. Abonadas"].apply(formatear_cantidades_limpias)
     
                         st.dataframe(
                             df_aud_rect_disp,
@@ -1325,8 +1378,8 @@ try:
                                 "Motivo": st.column_config.Column("Motivo", width="small"),
                                 "Procedencia": st.column_config.Column("Procedencia", width="small"),
                                 "Estado": st.column_config.Column("Estado", width="small"),
-                                "Unid. Grabadas": st.column_config.NumberColumn("Unid. Grabadas", format="%d", width="small"),
-                                "Unid. Abonadas": st.column_config.NumberColumn("Unid. Abonadas", format="%d", width="small"),
+                                "Unid. Grabadas": st.column_config.Column("Unid. Grabadas", width="small"),
+                                "Unid. Abonadas": st.column_config.Column("Unid. Abonadas", width="small"),
                                 "Monto ($)": st.column_config.NumberColumn("Monto ($)", format="$%.2f", width="medium")
                             }
                         )
@@ -1731,6 +1784,7 @@ try:
                         by="Lineas con Unidades sueltas", ascending=False
                     ).head(15).reset_index(drop=True)
 
+                    df_top15_sueltas_disp["Unidades Sueltas Totales"] = df_top15_sueltas_disp["Unidades Sueltas Totales"].apply(formatear_cantidades_limpias)
                     st.dataframe(
                         df_top15_sueltas_disp[[
                             "Tienda", "Lineas con Unidades sueltas", "Pedidos Afectados",
@@ -1742,7 +1796,7 @@ try:
                             "Lineas con Unidades sueltas": st.column_config.NumberColumn("Lineas con Unidades sueltas", format="%d", width="medium"),
                             "Pedidos Afectados": st.column_config.NumberColumn("Pedidos Afectados", format="%d", width="medium"),
                             "% Aceptación": st.column_config.NumberColumn("% Aceptación", format="%.1f %%", width="medium", help="Porcentaje de líneas confirmadas sobre el total grabado por la tienda"),
-                            "Unidades Sueltas Totales": st.column_config.NumberColumn("Unidades Sueltas Totales", format="%.0f", width="medium"),
+                            "Unidades Sueltas Totales": st.column_config.Column("Unidades Sueltas Totales", width="medium"),
                             "Monto Total ($)": st.column_config.NumberColumn("Monto Total ($)", format="$%.2f", width="medium", help="Monto correspondiente a rectificaciones confirmadas (Estado 'M')")
                         }
                     )
@@ -1793,6 +1847,8 @@ try:
                         "Estado_Norm": "Estado (M/P/R)",
                         "Monto_Signed": "Monto ($)"
                     })
+                    if "Unid. Rectificadas" in df_sueltas_det_clean.columns:
+                        df_sueltas_det_clean["Unid. Rectificadas"] = df_sueltas_det_clean["Unid. Rectificadas"].apply(formatear_cantidades_limpias)
 
                     st.dataframe(
                         df_sueltas_det_clean,
@@ -1805,7 +1861,7 @@ try:
                             "SKU": st.column_config.Column("SKU", width="small"),
                             "Producto / Descripción": st.column_config.Column("Producto / Descripción", width="large"),
                             "Familia": st.column_config.Column("Familia", width="medium"),
-                            "Unid. Rectificadas": st.column_config.NumberColumn("Unid. Rectificadas", format="%.0f", width="small"),
+                            "Unid. Rectificadas": st.column_config.Column("Unid. Rectificadas", width="small"),
                             "Cant. por Bulto (UxB)": st.column_config.NumberColumn("Cant. por Bulto (UxB)", format="%.0f", width="small"),
                             "Motivo": st.column_config.Column("Motivo", width="small"),
                             "Procedencia": st.column_config.Column("Procedencia", width="small"),
@@ -2329,19 +2385,30 @@ try:
                 col_desc_m = "Descripción" if "Descripción" in df_m_lines.columns else "Producto"
 
                 def es_linea_master_check(row):
+                    # 1. Validación estricta de Artículo Máster
                     es_m_flag = str(row.get("Es_Master", "")).strip().upper() in ["SI", "SÍ"]
                     if not es_m_flag:
                         return False
 
                     unid = float(row.get("Unidades_Num", 0.0))
-                    uxb = float(row.get("UxB", 0.0))
-                    bulfm = float(row.get("BULFM", 1.0))
+                    uxb = float(row.get("UxB", 1.0))
+                    bxm = float(row.get("BULFM", 1.0))
 
-                    # Si las unidades rectificadas son mayores a 0 en un artículo catalogado como Máster
-                    if unid > 0.0:
-                        return True
+                    # El bulto máster debe tener más de 1 bulto simple
+                    if bxm <= 1.0 or uxb <= 0.0:
+                        return False
 
-                    return False
+                    uxm = uxb * bxm  # Unidades totales del bulto máster
+
+                    # 2. Las unidades rectificadas deben superar estrictamente a un bulto simple (descarta faltantes/sobrantes de 1 bulto)
+                    if unid <= uxb:
+                        return False
+
+                    # 3. Múltiplo de bultos completos (desfase de facturación máster) o de caja máster completa
+                    es_multiplo_bulto = (unid % uxb) == 0
+                    es_multiplo_master = (unid % uxm) == 0
+
+                    return es_multiplo_bulto or es_multiplo_master
                 df_m_lines["Es_Linea_Master"] = df_m_lines.apply(es_linea_master_check, axis=1)
                 df_m_only = df_m_lines[df_m_lines["Es_Linea_Master"] == True].copy()
 
@@ -2406,12 +2473,15 @@ try:
                         "SKU": st.column_config.Column("SKU", width="small"),
                         "Descripción del Artículo": st.column_config.Column("Descripción del Artículo", width="large"),
                         "Líneas Rectificadas": st.column_config.NumberColumn("Líneas Rectif.", format="%d", width="small"),
-                        "Unidades Totales": st.column_config.NumberColumn("Unidades Totales", format="%.0f", width="small"),
+                        "Unidades Totales": st.column_config.NumberColumn("Unidades Totales", format="%.2f", width="small"),
                         "Monto Total ($)": st.column_config.NumberColumn("Monto Total ($)", format="$%.2f", width="medium")
                     }
                     for alm_name in alm_cols:
                         col_config_top_art[f"Alm. {alm_name}"] = st.column_config.NumberColumn(f"Alm. {alm_name}", format="%d", width="small")
 
+                    if "Unidades Totales" in tb_art_disp.columns:
+                        tb_art_disp["Unidades Totales"] = tb_art_disp["Unidades Totales"].apply(formatear_cantidades_limpias)
+                    col_config_top_art["Unidades Totales"] = st.column_config.Column("Unidades Totales", width="small")
                     st.dataframe(
                         tb_art_disp,
                         hide_index=True,
@@ -2454,6 +2524,8 @@ try:
                         "Unidades_Num": "Unid. Rectificadas",
                         "Monto_Signed": "Monto ($)"
                     })
+                    if "Unid. Rectificadas" in df_m_det_clean.columns:
+                        df_m_det_clean["Unid. Rectificadas"] = df_m_det_clean["Unid. Rectificadas"].apply(formatear_cantidades_limpias)
 
                     st.dataframe(
                         df_m_det_clean,
@@ -2468,7 +2540,7 @@ try:
                             "UxB": st.column_config.NumberColumn("UxB", format="%.0f", width="small"),
                             "BxM": st.column_config.NumberColumn("BxM", format="%.0f", width="small"),
                             "Master": st.column_config.Column("Master", width="small"),
-                            "Unid. Rectificadas": st.column_config.NumberColumn("Unid. Rectificadas", format="%.0f", width="small"),
+                            "Unid. Rectificadas": st.column_config.Column("Unid. Rectificadas", width="small"),
                             "Motivo": st.column_config.Column("Motivo", width="small"),
                             "Procedencia": st.column_config.Column("Procedencia", width="small"),
                             "Estado": st.column_config.Column("Estado", width="small"),

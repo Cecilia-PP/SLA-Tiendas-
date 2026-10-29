@@ -192,16 +192,22 @@ def procesar_maestro_articulos(carpeta="."):
     col_desc = next((c for c in df_m.columns if any(k in c for k in ["DESCRIPCION", "DESCRIPCIÓN", "PRODUCTO"])), None)
     col_fam = next((c for c in df_m.columns if any(k in c for k in ["FAMILIA", "RUBRO"])), None)
     col_subfam = next((c for c in df_m.columns if any(k in c for k in ["SUBFAMILIA", "SUB_RUBRO"])), None)
-    col_bxm = next((c for c in df_m.columns if any(k in c for k in ["BULTO MASTER", "BULFM", "BXM", "MASTER"])), None)
+    col_flag_m = next((c for c in df_m.columns if any(k in c for k in ["BULTO MASTER", "BULFM", "MASTER"]) and "DESC" not in c), None)
 
     res = pd.DataFrame()
     res["Artículo"] = df_m[col_sku].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
     if col_desc: res["Descripción"] = df_m[col_desc].apply(corregir_encoding_texto)
     if col_fam: res["Familia"] = df_m[col_fam].astype(str).str.strip()
     if col_subfam: res["Subfamilia"] = df_m[col_subfam].astype(str).str.strip()
-    res["BULFM"] = pd.to_numeric(df_m[col_bxm].astype(str).str.replace(",", "."), errors="coerce").fillna(1.0) if col_bxm else 1.0
+    
+    # ⚡ BANDERA BINARIA MAESTRO: Solo 1 es Máster ('Sí'). Códigos 2, 0, vacíos o NaN son 'No'.
+    if col_flag_m:
+        flag_master = pd.to_numeric(df_m[col_flag_m].astype(str).str.replace(",", "."), errors="coerce").fillna(0).astype(int)
+    else:
+        flag_master = pd.Series(0, index=df_m.index)
+    res["Es_Master"] = np.where(flag_master == 1, "Sí", "No")
 
-    # Cargar dinámicamente cualquier archivo de UxB presente o futuro (*UxB*.csv)
+    # ⚡ CARGA DUAL DE ARCHIVOS UXB (Extrae UxB y el factor real BxM desde UxB 503.csv)
     patrones_uxb = [
         os.path.join(carpeta, "*[Uu][Xx][Bb]*.csv"),
         os.path.join(carpeta, "Datos_mensuales", "*[Uu][Xx][Bb]*.csv")
@@ -212,26 +218,58 @@ def procesar_maestro_articulos(carpeta="."):
     archivos_uxb_unicos = sorted(list(set(archivos_uxb)))
 
     mapa_uxb_acumulado = {}
+    mapa_bxm_acumulado = {}
+    articulos_master_uxb = set()
+
     if archivos_uxb_unicos:
         for f_uxb in archivos_uxb_unicos:
-            print(f"   -> Incorporando factores UxB desde: {f_uxb}")
+            print(f"   -> Incorporando factores UxB y BxM desde: {f_uxb}")
             try:
                 df_u = leer_csv_robusto(f_uxb)
                 df_u.columns = df_u.columns.str.strip().str.upper()
-                c_sk = next((c for c in df_u.columns if any(k in c for k in ["ARTICULO", "ARTÍCULO", "SKU"])), df_u.columns[0])
-                c_ux = next((c for c in df_u.columns if any(k in c for k in ["UXB", "BULTO", "UNID", "CANT"])), df_u.columns[1])
+                c_sk = next((c for c in df_u.columns if any(k in c for k in ["ARTICULO", "ARTÍCULO", "SKU", "COD_ART"])), df_u.columns[0])
+                c_ux = next((c for c in df_u.columns if "UXB" in c or "BULTO" in c or "UNID" in c), (df_u.columns[1] if len(df_u.columns) > 1 else None))
+                c_form = next((c for c in df_u.columns if any(k in c for k in ["FORMATO", "TIPO", "FORMA"])), None)
+                c_bx = next((c for c in df_u.columns if c != c_ux and any(k in c for k in ["BULFM", "BXM", "MASTER", "FACTOR", "BX M", "BULTOS X MASTER", "BULTOS POR MASTER"])), None)
+
                 df_u["Art_Key"] = df_u[c_sk].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
-                df_u["UxB_Val"] = pd.to_numeric(df_u[c_ux].astype(str).str.replace(",", "."), errors="coerce")
-                m_uxb = df_u.dropna(subset=["UxB_Val"]).drop_duplicates("Art_Key").set_index("Art_Key")["UxB_Val"].to_dict()
-                mapa_uxb_acumulado.update(m_uxb)
+                if c_ux:
+                    df_u["UxB_Val"] = pd.to_numeric(df_u[c_ux].astype(str).str.replace(",", "."), errors="coerce").fillna(1.0)
+                    m_uxb = df_u.dropna(subset=["UxB_Val"]).groupby("Art_Key")["UxB_Val"].first().to_dict()
+                    mapa_uxb_acumulado.update(m_uxb)
+
+                if c_bx:
+                    df_u["BULFM_Val"] = pd.to_numeric(df_u[c_bx].astype(str).str.replace(",", "."), errors="coerce").fillna(1.0)
+                    if c_form:
+                        # ⚡ En UxB 503, la fila con Formato == 'M' contiene el factor BxM real (ej. 4, 6, 12)
+                        df_m_rows = df_u[df_u[c_form].astype(str).str.strip().str.upper() == 'M']
+                        if not df_m_rows.empty:
+                            m_bxm = df_m_rows.groupby("Art_Key")["BULFM_Val"].max().to_dict()
+                            mapa_bxm_acumulado.update(m_bxm)
+                            articulos_master_uxb.update(set(df_m_rows["Art_Key"].unique()))
+                    else:
+                        df_m_rows = df_u[df_u["BULFM_Val"] > 1.0]
+                        if not df_m_rows.empty:
+                            m_bxm = df_m_rows.groupby("Art_Key")["BULFM_Val"].max().to_dict()
+                            mapa_bxm_acumulado.update(m_bxm)
+                            articulos_master_uxb.update(set(df_m_rows["Art_Key"].unique()))
             except Exception as e:
                 print(f"   ⚠️ Error en {f_uxb}: {e}")
 
-    if mapa_uxb_acumulado:
-        res["UxB"] = res["Artículo"].map(mapa_uxb_acumulado).fillna(1.0)
-    else:
-        res["UxB"] = 1.0
+    res["UxB"] = res["Artículo"].map(mapa_uxb_acumulado).fillna(1.0)
+    
+    # ⚡ CONDICIÓN MASTER ESTRICTA:
+    # Es Máster si en Maestro.csv Bulto Master == 1, o si en UxB 503 tiene fila Formato 'M'
+    cond_master = (res["Es_Master"] == "Sí") | (res["Artículo"].isin(articulos_master_uxb))
+    res["Es_Master"] = np.where(cond_master, "Sí", "No")
 
+    # ⚡ FACTOR BxM (BULFM):
+    # Para los máster, toma el BxM real de UxB 503 (ej. 4 para 13821, 6 para 126454, 12 para 127196).
+    # Para los no máster, BxM es 1.0.
+    res["BxM_Real"] = pd.to_numeric(res["Artículo"].map(mapa_bxm_acumulado), errors="coerce").fillna(1.0)
+    res["BULFM"] = np.where(res["Es_Master"] == "Sí", res["BxM_Real"], 1.0)
+    res["UxM"] = res["UxB"] * res["BULFM"]
+    res.drop(columns=["BxM_Real"], inplace=True, errors="ignore")
     return res.drop_duplicates(subset=["Artículo"])
 
 # ==============================================================================
@@ -297,9 +335,9 @@ def procesar_rectificaciones(carpeta=".", df_maestro=None, mapa_sup=None, mapa_p
         df_r["Fecha de Grabación"] = dt_g.dt.strftime("%d/%m/%Y").fillna(df_r["Fecha de Grabación"])
         df_r["Mes"] = dt_g.dt.month.fillna(0).astype(int)
 
-    # Cruce con Maestro (BULFM, UxB, Descripción, Familia, Subfamilia)
+    # Cruce con Maestro (BULFM, UxB, Descripción, Familia, Subfamilia, Es_Master)
     if df_maestro is not None and not df_maestro.empty:
-        cols_m = [c for c in ["Descripción", "Familia", "Subfamilia", "UxB", "BULFM"] if c in df_maestro.columns]
+        cols_m = [c for c in ["Descripción", "Familia", "Subfamilia", "UxB", "BULFM", "Es_Master"] if c in df_maestro.columns]
         df_r = df_r.merge(df_maestro[["Artículo"] + cols_m], on="Artículo", how="left", suffixes=("", "_m"))
         for col in cols_m:
             if f"{col}_m" in df_r.columns:
@@ -309,9 +347,12 @@ def procesar_rectificaciones(carpeta=".", df_maestro=None, mapa_sup=None, mapa_p
     col_u = next((c for c in ["Unid/Kgs grabados", "Unidades_Num", "Cantidad"] if c in df_r.columns), None)
     df_r["Unidades_Num"] = pd.to_numeric(df_r[col_u].astype(str).str.replace(",", "."), errors="coerce").fillna(1.0) if col_u else 1.0
     df_r["UxB"] = pd.to_numeric(df_r.get("UxB", 1.0), errors="coerce").fillna(1.0)
+    # ⚡ Preserva Es_Master y factor real BxM (BULFM) cruzado del Maestro y UxB 503
+    df_r["Es_Master"] = df_r["Es_Master"].fillna("No") if "Es_Master" in df_r.columns else "No"
     df_r["BULFM"] = pd.to_numeric(df_r.get("BULFM", 1.0), errors="coerce").fillna(1.0)
+    # Si no es master, BxM es 1.0. Si es master, conserva su BxM real proveniente de UxB 503
+    df_r["BULFM"] = np.where(df_r["Es_Master"] == "Sí", df_r["BULFM"], 1.0)
     df_r["UxM"] = df_r["UxB"] * df_r["BULFM"]
-    df_r["Es_Master"] = np.where(pd.to_numeric(df_r["BULFM"], errors="coerce").fillna(0).astype(int) == 1, "Sí", "No")
     df_r["Es_Unidad_Suelta"] = (df_r["UxB"] > 1.0) & (df_r["Unidades_Num"] > 0.0) & (df_r["Unidades_Num"] < df_r["UxB"])
 
     # Asignar Supervisores
