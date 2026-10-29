@@ -5,6 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
+import numpy as np
 
 st.set_page_config(page_title="Tablero Satisfacción - SLA Tiendas", layout="wide")
 st.markdown('<meta name="google" content="notranslate">', unsafe_allow_html=True)
@@ -132,6 +133,59 @@ def cargar_datos_sla():
             df_sla["Responsable_Tienda"] = df_sla["Responsable_Tienda"].apply(corregir_encoding_texto)
             df_sla["Responsable_Tienda"] = df_sla["Responsable_Tienda"].replace(["-", "--", "- ", "", "nan", "None"], "Sin Asignar")
 
+        # ⚡ CARGA Y CRUCE DINÁMICO DE SUPERVISORES / FRANQUICIADOS
+        necesita_supervisores = ("Responsable_Tienda" not in df_sla.columns) or (df_sla["Responsable_Tienda"].isin(["Sin Asignar", "nan", ""]).all())
+        if necesita_supervisores and "Tienda" in df_sla.columns:
+            import glob
+            pats_sup = [
+                "*[Ss][Uu][Pp][Ee][Rr][Vv][Ii][Ss][Ii]*.xlsx", "*[Ss][Uu][Pp][Ee][Rr][Vv][Ii][Ss][Ii]*.csv",
+                "*[Zz][Oo][Nn][Aa]*.xlsx", "*[Zz][Oo][Nn][Aa]*.csv",
+                os.path.join("Datos_mensuales", "*[Ss][Uu][Pp][Ee][Rr][Vv][Ii][Ss][Ii]*.xlsx"),
+                os.path.join("Datos_mensuales", "*[Ss][Uu][Pp][Ee][Rr][Vv][Ii][Ss][Ii]*.csv"),
+                os.path.join("Datos_mensuales", "*[Zz][Oo][Nn][Aa]*.xlsx"),
+                os.path.join("Datos_mensuales", "*[Zz][Oo][Nn][Aa]*.csv")
+            ]
+            f_sup_list = []
+            for p in pats_sup:
+                f_sup_list.extend(glob.glob(p))
+            f_sup_list = sorted(list(set(f_sup_list)))
+            if f_sup_list:
+                try:
+                    f_s = f_sup_list[0]
+                    if f_s.endswith(".xlsx") or f_s.endswith(".xls"):
+                        xls_s = pd.ExcelFile(f_s)
+                        df_s_temp = pd.read_excel(xls_s, sheet_name=xls_s.sheet_names[0], dtype=str)
+                    else:
+                        try:
+                            df_s_temp = pd.read_csv(f_s, sep=None, engine="python", encoding="latin1", dtype=str, on_bad_lines="skip")
+                        except Exception:
+                            df_s_temp = pd.read_csv(f_s, sep=";", encoding="latin1", dtype=str, on_bad_lines="skip")
+                    
+                    df_s_temp.columns = df_s_temp.columns.str.strip()
+                    def b_col(claves):
+                        for col_name in df_s_temp.columns:
+                            cn = col_name.lower().replace(".", "").replace("_", " ").strip()
+                            if any(k in cn for k in claves): return col_name
+                        return None
+                    
+                    c_tienda = b_col(["tienda", "sucursal", "cod suc", "nro tienda", "numero tienda", "id tienda", "codigo"]) or df_s_temp.columns[0]
+                    c_resp = b_col(["supervisor", "franquiciado", "responsable", "encargado", "franquicia", "nombre", "supervisor zona", "zona"]) or (df_s_temp.columns[1] if len(df_s_temp.columns) > 1 else df_s_temp.columns[0])
+                    
+                    df_s_temp["T_Key"] = df_s_temp[c_tienda].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
+                    df_s_temp["Resp_Clean"] = df_s_temp[c_resp].apply(corregir_encoding_texto).astype(str).str.strip()
+                    mapa_supervisores = df_s_temp.drop_duplicates(subset=["T_Key"]).set_index("T_Key")["Resp_Clean"].to_dict()
+                    
+                    df_sla["T_Key"] = df_sla["Tienda"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
+                    df_sla["Responsable_Tienda"] = df_sla["T_Key"].map(mapa_supervisores).fillna("Sin Asignar")
+                    df_sla.drop(columns=["T_Key"], inplace=True, errors="ignore")
+                    
+                    if not df_rect.empty and "Tienda" in df_rect.columns:
+                        df_rect["T_Key"] = df_rect["Tienda"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
+                        df_rect["Responsable_Tienda"] = df_rect["T_Key"].map(mapa_supervisores).fillna("Sin Asignar")
+                        df_rect.drop(columns=["T_Key"], inplace=True, errors="ignore")
+                except Exception:
+                    pass
+
         if "Area_Salida" not in df_sla.columns:
             df_sla["Area_Salida"] = "Sin Clasificar"
         else:
@@ -190,17 +244,48 @@ def cargar_datos_sla():
                     df_rect["Gestion"] = df_rect["Tienda"].map(mapa_gest).fillna("Sin Clasificar")
                     df_rect["Gestion"] = df_rect["Gestion"].replace(["-", "--", "- ", "", "nan", "None"], "Sin Clasificar")
 
-        if not df_rect.empty:
-            if "BULFM" not in df_rect.columns:
-                if "UxM" in df_rect.columns and "UxB" in df_rect.columns:
-                    df_rect["BULFM"] = df_rect.apply(lambda r: (r["UxM"] / r["UxB"]) if r["UxB"] > 0 else 1.0, axis=1)
-                else:
-                    df_rect["BULFM"] = 1.0
+            # ⚡ ENRIQUECIMIENTO EN CALIENTE SI UxB O BULFM NO VIENEN EN EL PARQUET
+            necesita_maestro = ("UxB" not in df_rect.columns) or (pd.to_numeric(df_rect.get("UxB", 1.0), errors="coerce").fillna(1.0) > 1.0).sum() == 0
+            if necesita_maestro and "Artículo" in df_rect.columns:
+                import glob
+                m_archivos = glob.glob("*[Mm]aestro*.csv") + glob.glob(os.path.join("Datos_mensuales", "*[Mm]aestro*.csv"))
+                if m_archivos:
+                    try:
+                        df_m_app = pd.read_csv(m_archivos[0], sep=None, engine="python", encoding="latin1", dtype=str, on_bad_lines="skip")
+                        df_m_app.columns = df_m_app.columns.str.strip().str.upper()
+                        col_s = next((c for c in df_m_app.columns if any(k in c for k in ["ARTICULO", "ARTÍCULO", "SKU", "COD_ART"])), None)
+                        col_u = next((c for c in df_m_app.columns if "UXB" in c or "BULTO" in c or "CAJA" in c), None)
+                        col_b = next((c for c in df_m_app.columns if "BULFM" in c or "BXM" in c or "MASTER" in c), None)
+                        if col_s:
+                            df_m_app["Art_Key"] = df_m_app[col_s].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
+                            df_rect["Art_Key"] = df_rect["Artículo"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
+                            if col_u:
+                                m_uxb = df_m_app.set_index("Art_Key")[col_u].to_dict()
+                                df_rect["UxB"] = pd.to_numeric(df_rect["Art_Key"].map(m_uxb).astype(str).str.replace(",", "."), errors="coerce").fillna(1.0)
+                            if col_b:
+                                m_bxm = df_m_app.set_index("Art_Key")[col_b].to_dict()
+                                df_rect["BULFM"] = pd.to_numeric(df_rect["Art_Key"].map(m_bxm).astype(str).str.replace(",", "."), errors="coerce").fillna(1.0)
+                            df_rect.drop(columns=["Art_Key"], inplace=True, errors="ignore")
+                    except Exception:
+                        pass
+
+            # Asegurar tipos y cálculo de unidades / master
+            col_u_raw = next((c for c in ["Unid/Kgs grabados", "Unidades_Num", "Cantidad", "Cant"] if c in df_rect.columns), None)
+            if col_u_raw:
+                df_rect["Unidades_Num"] = pd.to_numeric(df_rect[col_u_raw].astype(str).str.replace(",", "."), errors="coerce").fillna(1.0)
+            else:
+                df_rect["Unidades_Num"] = 1.0
+
+            df_rect["UxB"] = pd.to_numeric(df_rect.get("UxB", 1.0), errors="coerce").fillna(1.0)
+            df_rect["BULFM"] = pd.to_numeric(df_rect.get("BULFM", 1.0), errors="coerce").fillna(1.0)
+            df_rect["UxM"] = df_rect["UxB"] * df_rect["BULFM"]
+            df_rect["Es_Master"] = np.where(pd.to_numeric(df_rect.get("BULFM", 0), errors="coerce").fillna(0).astype(int) == 1, "Sí", "No")
+            df_rect["Es_Unidad_Suelta"] = (df_rect["UxB"] > 1.0) & (df_rect["Unidades_Num"] > 0.0) & (df_rect["Unidades_Num"] < df_rect["UxB"])
 
         return df_sla, df_rect
     return pd.DataFrame(), pd.DataFrame()
 
-@st.cache_data(show_spinner=False)
+
 def cargar_datos_anulaciones(_df_sla=None, _df_rect=None):
     df_a = pd.DataFrame()
     archivos_csv = [f for f in os.listdir(".") if ("anula" in f.lower() or "causa" in f.lower()) and f.endswith(".csv")]
@@ -513,7 +598,7 @@ try:
                 "Pedido Perfecto", "Sobrante Neto",
                 "Sustitución Misma Subfamilia", "Sustitución Distinta Subfamilia",
                 "Falta/Sobra", "Faltante Neto", "Formato no entregado", "Error facturación master",
-                "Etiquetas Cambiadas"
+                "Etiquetas Cambiadas", "Rectificación Almacén"
             ]
             casuisticas_presentes = [c for c in orden_cas_filtro if c in df_sla["Casuistica"].dropna().unique()]
             otras_cas = [c for c in df_sla["Casuistica"].dropna().unique() if c not in casuisticas_presentes]
@@ -740,22 +825,35 @@ try:
             df_lineas_mes = df_meses_base.merge(df_lineas_mes, on="Mes_Num", how="left").fillna({"Cant_Lineas_Rectificadas": 0})
             df_lineas_mes = df_lineas_mes.sort_values("Mes_Num").reset_index(drop=True)
 
+            # Totalizador de Pedidos Rectificados por Mes
+            df_tot_ped_mes = df_cas_mes.groupby("Mes_Num", as_index=False)["Cantidad_Pedidos"].sum()
+            df_tot_ped_mes = df_meses_base.merge(df_tot_ped_mes, on="Mes_Num", how="left").fillna({"Cantidad_Pedidos": 0})
+            df_tot_ped_mes = df_tot_ped_mes.sort_values("Mes_Num").reset_index(drop=True)
+
             colores_cas = {
-                "Sobrante Neto": "#0077B6", "Sustitución Misma Subfamilia": "#80ED99",
-                "Sustitución Distinta Subfamilia": "#FF9E00", "Falta/Sobra": "#4CC9F0", 
-                "Faltante Neto": "#E63946", "Formato no entregado": "#FFE066", "Error facturación master": "#7209B7", 
-                "Etiquetas Cambiadas": "#2B2D42"
+                "Sobrante Neto": "#0077B6",                  # Azul cobalto
+                "Sustitución Misma Subfamilia": "#2EC4B6",   # Verde menta / esmeralda
+                "Sustitución Distinta Subfamilia": "#F77F00", # Naranja cálido
+                "Falta/Sobra": "#48CAE4",                    # Celeste cielo
+                "Faltante Neto": "#E63946",                  # Rojo vivo
+                "Formato no entregado": "#FFD166",           # Amarillo dorado
+                "Error facturación master": "#9B5DE5",        # Violeta eléctrico
+                "Etiquetas Cambiadas": "#343A40",            # Carbón grafito oscuro
+                "Rectificación Almacén": "#F4ACB7"           # 🌸 Rosa pálido
             }
 
             fig_comb = make_subplots(specs=[[{"secondary_y": True}]])
             casuisticas_orden = [
                 "Sobrante Neto", "Sustitución Misma Subfamilia", "Sustitución Distinta Subfamilia", 
-                "Falta/Sobra", "Faltante Neto", "Formato no entregado", "Error facturación master", "Etiquetas Cambiadas"
+                "Falta/Sobra", "Faltante Neto", "Formato no entregado", "Error facturación master", "Etiquetas Cambiadas",
+                "Rectificación Almacén"
             ]
 
             for cas in casuisticas_orden:
                 df_c = df_cas_mes[df_cas_mes["Casuistica"] == cas].sort_values("Mes_Num")
                 if not df_c.empty:
+                    # Si es rosa pálido, usamos texto oscuro dentro de la barra para máxima legibilidad
+                    text_color_inside = "#2B2D42" if cas == "Rectificación Almacén" else "white"
                     fig_comb.add_trace(go.Bar(
                         x=df_c["Mes_Num"], 
                         y=df_c["Cantidad_Pedidos"], 
@@ -763,23 +861,40 @@ try:
                         marker_color=colores_cas.get(cas, "#999999"), 
                         text=df_c["Etiqueta_Barra"], 
                         textposition="inside",
+                        insidetextfont=dict(color=text_color_inside),
                         hovertemplate="<b>%{data.name}</b><br>Pedidos: %{y:,}<extra></extra>"
                     ), secondary_y=False)
 
+            # Totalizador acumulado de pedidos arriba de cada barra
+            fig_comb.add_trace(go.Scatter(
+                x=df_tot_ped_mes["Mes_Num"],
+                y=df_tot_ped_mes["Cantidad_Pedidos"],
+                name="Total Pedidos",
+                mode="text",
+                text=[f"<b>{int(x):,}</b>" if x > 0 else "" for x in df_tot_ped_mes["Cantidad_Pedidos"]],
+                textposition="top center",
+                textfont=dict(size=12, color="#1D3557"),
+                showlegend=False,
+                hovertemplate="<b>%{y:,} Pedidos</b><extra></extra>"
+            ), secondary_y=False)
+
+            # Línea de Líneas Rectificadas (Eje Secundario en Azul Marino Noche oscuro con marcadores blancos)
             fig_comb.add_trace(go.Scatter(
                 x=df_lineas_mes["Mes_Num"], 
                 y=df_lineas_mes["Cant_Lineas_Rectificadas"], 
                 name="Líneas Rectificadas", 
                 mode="lines+markers+text", 
-                line=dict(color="#00B4D8", width=4.0), 
-                marker=dict(size=10, color="#03045E"), 
-                text=[f"{int(x):,}" for x in df_lineas_mes["Cant_Lineas_Rectificadas"]], 
+                line=dict(color="#03045E", width=3.5), 
+                marker=dict(size=9, color="#03045E", line=dict(width=2, color="#FFFFFF")), 
+                text=[f"<b>{int(x):,}</b> lín." for x in df_lineas_mes["Cant_Lineas_Rectificadas"]], 
                 textposition="top center",
                 hovertemplate="<b>Líneas Rectificadas</b>: %{y:,}<extra></extra>"
             ), secondary_y=True)
 
+            max_ped_stack = df_tot_ped_mes["Cantidad_Pedidos"].max() if not df_tot_ped_mes.empty else 10000
+
             fig_comb.update_layout(
-                barmode="stack", height=430,
+                barmode="stack", height=460,
                 hovermode="closest",
                 paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", 
                 legend=dict(orientation="h", y=-0.25, x=0.5, xanchor="center"),
@@ -788,6 +903,14 @@ try:
                     tickmode="array",
                     tickvals=meses_ordenados,
                     ticktext=orden_nombres_meses
+                ),
+                yaxis=dict(
+                    title="Cantidad de Pedidos Rectificados",
+                    range=[0, max_ped_stack * 1.25]
+                ),
+                yaxis2=dict(
+                    title="Cantidad de Líneas Rectificadas",
+                    showgrid=False
                 )
             )
             st.plotly_chart(fig_comb, use_container_width=True)
@@ -826,7 +949,7 @@ try:
                 "Sobrante Neto", 
                 "Sustitución Misma Subfamilia", "Sustitución Distinta Subfamilia", 
                 "Falta/Sobra", "Faltante Neto", "Formato no entregado", "Error facturación master", 
-                "Etiquetas Cambiadas"
+                "Etiquetas Cambiadas", "Rectificación Almacén"
             ]
             casuisticas_cat = pd.Categorical(cas_sum["Casuistica"], categories=orden_cas, ordered=True)
             cas_sum["Casuistica_Cat"] = casuisticas_cat
@@ -927,7 +1050,7 @@ try:
                     "Sobrante Neto", "Sustitución Misma Subfamilia", 
                     "Sustitución Distinta Subfamilia", "Falta/Sobra", 
                     "Faltante Neto", "Formato no entregado", "Error facturación master", 
-                    "Etiquetas Cambiadas"
+                    "Etiquetas Cambiadas", "Rectificación Almacén"
                 ]
                 casuisticas_presentes_tab2 = [c for c in orden_cas_tab2 if c == "Todas las Casuísticas" or c in df_sla["Casuistica"].dropna().unique()]
                 
@@ -1096,7 +1219,7 @@ try:
                         busqueda_pedido = st.text_input("🔍 Filtrar exclusivamente por Número de Pedido:", "", key="txt_ped_h3_val")
                         if busqueda_pedido:
                             df_aud_rect = df_aud_rect[
-                                df_aud_rect["Pedido"].astype(str).str.contains(busqueda_ped_pedido.strip(), case=False, na=False)
+                                df_aud_rect["Pedido"].astype(str).str.contains(busqueda_pedido.strip(), case=False, na=False)
                             ]
     
                         col_motivo = "Motivo_Clean" if "Motivo_Clean" in df_aud_rect.columns else ("Motivo" if "Motivo" in df_aud_rect.columns else None)
@@ -1545,7 +1668,7 @@ try:
                         df_sueltas["Es_Unidad_Suelta"] = False
 
                 df_sueltas_all = df_sueltas[df_sueltas["Es_Unidad_Suelta"] == True].copy()
-                df_sueltas_conf = df_sueltas_all[df_sueltas_all["Estado_Norm"] == "M"].copy()
+                df_sueltas_conf = df_sueltas_all[df_sueltas_all["Estado_Norm"].isin(["M", "C", "CONFIRMADA", "APROBADA"])].copy()
 
                 tot_lineas_sueltas = len(df_sueltas_conf)
                 tot_pedidos_sueltas = df_sueltas_conf["Pedido"].nunique() if not df_sueltas_conf.empty else 0
@@ -1569,7 +1692,7 @@ try:
                     filas_top15_sueltas = []
                     for t_val, grp_t in df_sueltas_all.groupby("Tienda"):
                         tot_grab_t = len(grp_t)
-                        grp_conf_t = grp_t[grp_t["Estado_Norm"] == "M"]
+                        grp_conf_t = grp_t[grp_t["Estado_Norm"].isin(["M", "C", "CONFIRMADA", "APROBADA"])]
                         lin_conf_t = len(grp_conf_t)
                         ped_conf_t = grp_conf_t["Pedido"].nunique()
                         unid_conf_t = grp_conf_t["Unidades_Num"].sum() if "Unidades_Num" in grp_conf_t.columns else lin_conf_t
@@ -2181,34 +2304,25 @@ try:
                 # Filtrar EXCLUSIVAMENTE rectificaciones confirmadas (Estado 'M')
                 col_est_tab7 = "Estado_Clean" if "Estado_Clean" in df_m_lines.columns else ("Estado" if "Estado" in df_m_lines.columns else None)
                 if col_est_tab7:
-                    df_m_lines = df_m_lines[df_m_lines[col_est_tab7].astype(str).str.strip().str.upper() == "M"].copy()
+                    df_m_lines = df_m_lines[df_m_lines[col_est_tab7].astype(str).str.strip().str.upper().isin(["M", "C", "CONFIRMADA", "APROBADA"])].copy()
 
                 col_art_m = "Artículo" if "Artículo" in df_m_lines.columns else ("SKU" if "SKU" in df_m_lines.columns else "Producto")
                 col_desc_m = "Descripción" if "Descripción" in df_m_lines.columns else "Producto"
 
                 def es_linea_master_check(row):
-                    sku = str(row.get(col_art_m, "")).strip().lstrip("0")
-                    unid = float(row.get("Unidades_Num", 0.0))
-                    uxb = float(row.get("UxB", 0.0))
-                    bulfm = float(row.get("BULFM", 1.0))
-                    uxm = float(row.get("UxM", uxb * bulfm if uxb > 0 else 0.0))
                     es_m_flag = str(row.get("Es_Master", "")).strip().upper() in ["SI", "SÍ"]
-
                     if not es_m_flag:
                         return False
 
-                    if uxb > 0.0 and unid == uxb:
-                        return False
+                    unid = float(row.get("Unidades_Num", 0.0))
+                    uxb = float(row.get("UxB", 0.0))
+                    bulfm = float(row.get("BULFM", 1.0))
 
-                    if uxm > uxb and unid > 0.0:
-                        if unid == uxm or unid % uxm == 0:
-                            return True
-                        dif = uxm - uxb
-                        if dif > 0.0 and dif != uxb and (unid == dif or unid % dif == 0):
-                            return True
+                    # Si las unidades rectificadas son mayores a 0 en un artículo catalogado como Máster
+                    if unid > 0.0:
+                        return True
 
                     return False
-
                 df_m_lines["Es_Linea_Master"] = df_m_lines.apply(es_linea_master_check, axis=1)
                 df_m_only = df_m_lines[df_m_lines["Es_Linea_Master"] == True].copy()
 
@@ -2356,57 +2470,63 @@ try:
             matriz_p = pd.DataFrame([
                 {
                     "Casuística Operativa": "Pedido Perfecto",
-                    "Descuento Aplicado": "0.0 Pts",
+                    "Descuento Aplicado": "0",
                     "Descripción": "Pedido sin rectificaciones",
                     "Lógica y Límites": ""
                 },
                 {
                     "Casuística Operativa": "Sobrante Neto",
-                    "Descuento Aplicado": "0.0 Pts",
+                    "Descuento Aplicado": "0",
                     "Descripción": "Pedido con rectificación de sobra",
                     "Lógica y Límites": "Solo sobra"
                 },
                 {
                     "Casuística Operativa": "Sustitución Misma Subfamilia",
-                    "Descuento Aplicado": "-2.5 Pts",
+                    "Descuento Aplicado": "-2.5",
                     "Descripción": "Pedido con rectificación de falta y sobra en artículos de igual subfamilia",
-                    "Lógica y Límites": "Igual cantidad de lineas S=F misma sub familia < a 12 lineas"
+                    "Lógica y Límites": "Igual cantidad de lineas S=F misma sub familia"
                 },
                 {
                     "Casuística Operativa": "Sustitución Distinta Subfamilia",
-                    "Descuento Aplicado": "-4.5 Pts",
+                    "Descuento Aplicado": "-4.5",
                     "Descripción": "Pedido con rectificación de falta y sobra en artículos de distintas subfamilias",
-                    "Lógica y Límites": "Igual cantidad de lineas S=F distinta sub familia  < a 12 lineas"
+                    "Lógica y Límites": "Igual cantidad de lineas S=F distinta sub familia"
                 },
                 {
                     "Casuística Operativa": "Falta/Sobra",
-                    "Descuento Aplicado": "-5.5 Pts",
+                    "Descuento Aplicado": "-5.5",
                     "Descripción": "Pedido con rectificación de falta y sobra",
                     "Lógica y Límites": "S y F < a 12 lineas no equitativas"
                 },
                 {
                     "Casuística Operativa": "Faltante Neto",
-                    "Descuento Aplicado": "-6.0 Pts",
+                    "Descuento Aplicado": "-6",
                     "Descripción": "Pedido con rectificación de solo falta",
                     "Lógica y Límites": "< 10 lineas solo F"
                 },
                 {
                     "Casuística Operativa": "Formato no entregado",
-                    "Descuento Aplicado": "-6.0 Pts",
+                    "Descuento Aplicado": "-10",
                     "Descripción": "Pedido con rectificación de solo falta de más de 10 líneas",
                     "Lógica y Límites": "> 10 lineas solo F"
                 },
                 {
                     "Casuística Operativa": "Error facturación master",
-                    "Descuento Aplicado": "-6.0 Pts",
+                    "Descuento Aplicado": "-6",
                     "Descripción": "Pedido con rectificación de falta en bultos Master",
                     "Lógica y Límites": "Solo master,la cantidad rectificada coincide con múltiplos de caja máster o diferencia máster"
                 },
                 {
                     "Casuística Operativa": "Etiquetas Cambiadas",
-                    "Descuento Aplicado": "-10.0 Pts",
+                    "Descuento Aplicado": "-9",
                     "Descripción": "Faltas y sobras simultáneas mayores o iguales a 12 líneas rectificadas",
                     "Lógica y Límites": "S y F > a 12 lineas no equitativas"
+                },
+                {
+                    "Casuística Operativa": "Rectificación Almacén",
+                    "Descuento Aplicado": "-10",
+                    "Descripción": "Pedido con rectificaciones grabadas directamente por el centro de distribución / almacén (Procedencia 'G')",
+                    "Lógica y Límites": "Al menos 1 línea grabada con Procedencia 'G'"
                 }
             ])
             st.dataframe(
