@@ -208,6 +208,9 @@ def cargar_datos_sla():
             else:
                 df_rect["Estado"] = "M"
 
+            # ⚡ Excluir estrictamente cualquier rectificación con Estado 'A'
+            df_rect = df_rect[df_rect["Estado"] != "A"]
+
             if "Monto_Rectif" not in df_rect.columns:
                 col_m = None
                 for c in ["Imp.tien.PVP S/IVA mon.BD", "Monto", "Importe"]:
@@ -931,6 +934,15 @@ try:
                 pedidos_por_cas = df_sla_tab1_cas.set_index("Pedido")["Casuistica"].to_dict()
                 df_rect_cas_temp = df_rect.copy()
                 df_rect_cas_temp["Casuistica_Mapped"] = df_rect_cas_temp["Pedido"].map(pedidos_por_cas).fillna("Sin Clasificar")
+                
+                # Filtrar líneas válidas por procedencia: 'G' para Rectificación Almacén, 'T' para casuísticas de tienda
+                if "Procedencia" in df_rect_cas_temp.columns:
+                    proc_series = df_rect_cas_temp["Procedencia"].astype(str).str.strip().str.upper()
+                    mask_valid_proc = (
+                        ((df_rect_cas_temp["Casuistica_Mapped"] == "Rectificación Almacén") & (proc_series == "G")) |
+                        ((df_rect_cas_temp["Casuistica_Mapped"] != "Rectificación Almacén") & (proc_series == "T"))
+                    )
+                    df_rect_cas_temp = df_rect_cas_temp[mask_valid_proc]
 
                 col_est_cas = "Estado_Clean" if "Estado_Clean" in df_rect_cas_temp.columns else ("Estado" if "Estado" in df_rect_cas_temp.columns else "Pedido")
 
@@ -1072,6 +1084,13 @@ try:
                         if not df_aud_rect.empty:
                             pedidos_cas_filtrados = set(df_aud_sla["Pedido"].dropna().unique())
                             df_aud_rect = df_aud_rect[df_aud_rect["Pedido"].isin(pedidos_cas_filtrados)]
+                            # ⚡ Validación estricta de Procedencia según casuística
+                            if "Procedencia" in df_aud_rect.columns:
+                                col_p_clean = df_aud_rect["Procedencia"].astype(str).str.strip().str.upper()
+                                if cas_sel_tab2 == "Rectificación Almacén":
+                                    df_aud_rect = df_aud_rect[col_p_clean == "G"]
+                                else:
+                                    df_aud_rect = df_aud_rect[col_p_clean == "T"]
     
                     tot_p_t = len(df_aud_sla)
                     tot_p_rect_t = (df_aud_sla["Casuistica"] != "Pedido Perfecto").sum()

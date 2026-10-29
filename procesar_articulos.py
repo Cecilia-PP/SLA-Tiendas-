@@ -285,6 +285,13 @@ def procesar_rectificaciones(carpeta=".", df_maestro=None, mapa_sup=None, mapa_p
     df_r["Almacen"] = df_r["Almacen"].fillna("501").astype(str).str.strip()
     df_r["Monto_Rectif"] = pd.to_numeric(df_r.get("Monto_Rectif", 0.0).astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
 
+    # ⚡ LIMPIEZA DE RECTIFICACIONES EN ESTADO 'A' (No se analizan en el tablero)
+    if "Estado" in df_r.columns:
+        df_r["Estado"] = df_r["Estado"].astype(str).str.strip().str.upper()
+        cant_inicial = len(df_r)
+        df_r = df_r[df_r["Estado"] != "A"]
+        print(f"🧹 Excluidas {cant_inicial - len(df_r):,} líneas con Estado 'A' (no se analizan).")
+
     if "Fecha de Grabación" in df_r.columns:
         dt_g = normalizar_fechas_serie(df_r["Fecha de Grabación"])
         df_r["Fecha de Grabación"] = dt_g.dt.strftime("%d/%m/%Y").fillna(df_r["Fecha de Grabación"])
