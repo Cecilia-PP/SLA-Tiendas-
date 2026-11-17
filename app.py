@@ -568,6 +568,12 @@ def cargar_datos_anulaciones(_df_sla=None, _df_rect=None, periodos_activos=()):
     elif os.path.exists(parquet_file):
         df_a = pd.read_parquet(parquet_file)
 
+    if not df_a.empty and "Monto" in df_a.columns:
+        df_a["Monto"] = pd.to_numeric(
+            df_a["Monto"].astype(str).str.replace("$", "", regex=False).str.replace(",", ".").str.strip(),
+            errors="coerce"
+        ).fillna(0.0)
+
     if not df_a.empty and "Pedido" in df_a.columns:
         # Asegurar descarte de filas vacías
         df_a = df_a.dropna(how="all")
@@ -764,7 +770,7 @@ try:
             keys_a_limpiar = [
                 "sb_alm", "sb_gest", "sb_resp", "sb_tienda", "sb_area", "sb_cas",
                 "sb_est", "sb_fam", "sb_subfam", "sb_anio", "sb_mes",
-                "h6_flt_alm", "h6_flt_causa_anul", "h6_flt_causa_aprob", "h6_flt_tienda", "h6_flt_motivo", "txt_ped_portal"
+                "h6_flt_alm", "h6_flt_causa_anul", "h6_flt_causa_aprob", "h6_flt_tienda", "h6_flt_motivo", "txt_ped_portal", "sb_outliers"
             ]
             for k in keys_a_limpiar:
                 if k in st.session_state:
@@ -988,7 +994,7 @@ try:
         )
         
         tiendas_pocas_compras = set(pedidos_por_tienda[pedidos_por_tienda < umbral_min_pedidos].index)
-        activar_filtro_outliers = st.sidebar.checkbox("Excluir Tiendas con Pocos Pedidos", value=False)
+        activar_filtro_outliers = st.sidebar.checkbox("Excluir Tiendas con Pocos Pedidos", value=True, key="sb_outliers")
         
         if activar_filtro_outliers and len(tiendas_pocas_compras) > 0:
             df_sla = df_sla[~df_sla["Tienda"].isin(tiendas_pocas_compras)]
@@ -2436,7 +2442,12 @@ try:
                 if alm_portal_sel:
                     df_portal_csv = df_portal_csv[df_portal_csv["Almacen"].astype(str).isin(alm_portal_sel)].copy()
 
-                # Signo: Falta = +, Sobra = -
+                # Asegurar conversión numérica de Monto y signo: Falta = +, Sobra = -
+                if "Monto" in df_portal_csv.columns:
+                    df_portal_csv["Monto"] = pd.to_numeric(
+                        df_portal_csv["Monto"].astype(str).str.replace("$", "", regex=False).str.replace(",", ".").str.strip(),
+                        errors="coerce"
+                    ).fillna(0.0)
                 if "Tipo" in df_portal_csv.columns and "Monto" in df_portal_csv.columns:
                     df_portal_csv["Factor_Signo"] = df_portal_csv["Tipo"].astype(str).str.strip().str.capitalize().apply(lambda x: -1.0 if "Sobra" in x or x == "S" else 1.0)
                     df_portal_csv["Monto_Signed"] = df_portal_csv["Monto"] * df_portal_csv["Factor_Signo"]
@@ -2453,24 +2464,41 @@ try:
                 else:
                     df_portal_csv["Estado_Clean"] = "Anulada"
 
-                # Separar dataframes Anuladas (Rechazadas) y Aprobadas (Confirmadas)
-                df_csv_anul = df_portal_csv[df_portal_csv["Estado_Clean"].str.contains("Anulada|Rechazada|R", case=False, na=False)].copy()
-                df_csv_aprob = df_portal_csv[df_portal_csv["Estado_Clean"].str.contains("Aprobada|Confirmada|M", case=False, na=False)].copy()
+                # Separar dataframes Anuladas (Rechazadas) y Aprobadas (Confirmadas) sin colisión de letras sueltas
+                est_upper_s = df_portal_csv["Estado_Clean"].astype(str).str.strip().str.upper()
+                mask_anul = est_upper_s.str.contains("ANULAD|RECHAZAD", na=False) | (est_upper_s == "R")
+                mask_aprob = est_upper_s.str.contains("APROBAD|CONFIRMAD", na=False) | est_upper_s.isin(["M", "C"])
+
+                df_csv_anul = df_portal_csv[mask_anul].copy()
+                df_csv_aprob = df_portal_csv[mask_aprob & (~mask_anul)].copy()
 
                 if df_csv_anul.empty and df_csv_aprob.empty:
                     df_csv_anul = df_portal_csv.copy()
 
-                tot_lin_anul_csv = len(df_csv_anul)
-                tot_monto_anul_csv = df_csv_anul["Monto_Signed"].sum() if not df_csv_anul.empty else 0.0
+                tot_lin_anul_csv = int(len(df_csv_anul))
+                tot_monto_anul_csv = float(df_csv_anul["Monto_Signed"].sum()) if not df_csv_anul.empty else 0.0
 
-                tot_lin_aprob_csv = len(df_csv_aprob)
-                tot_monto_aprob_csv = df_csv_aprob["Monto_Signed"].sum() if not df_csv_aprob.empty else 0.0
+                tot_lin_aprob_csv = int(len(df_csv_aprob))
+                tot_monto_aprob_csv = float(df_csv_aprob["Monto_Signed"].sum()) if not df_csv_aprob.empty else 0.0
+
+                st.markdown("""
+                <style>
+                    div[data-testid="stMetricValue"] {
+                        font-size: 1.55rem !important;
+                        white-space: nowrap !important;
+                    }
+                    div[data-testid="stMetricLabel"] p {
+                        white-space: normal !important;
+                        line-height: 1.2 !important;
+                    }
+                </style>
+                """, unsafe_allow_html=True)
 
                 c1, c2, c3, c4 = st.columns(4)
-                c1.metric("❌ Líneas Anuladas / Rechazadas", f"{tot_lin_anul_csv:,}")
-                c2.metric("💸 Importe Total Anulado ($)", f"${tot_monto_anul_csv:,.0f}")
-                c3.metric("✅ Líneas Aprobadas / Confirmadas", f"{tot_lin_aprob_csv:,}")
-                c4.metric("💰 Importe Total Aprobado ($)", f"${tot_monto_aprob_csv:,.0f}")
+                c1.metric("❌ Líneas Anuladas", f"{tot_lin_anul_csv:,}")
+                c2.metric("💸 Importe Anulado ($)", f"${tot_monto_anul_csv:,.0f}")
+                c3.metric("✅ Líneas Aprobadas", f"{tot_lin_aprob_csv:,}")
+                c4.metric("💰 Importe Aprobado ($)", f"${tot_monto_aprob_csv:,.0f}")
 
                 st.markdown("---")
 
