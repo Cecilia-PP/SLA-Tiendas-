@@ -12,11 +12,20 @@ st.markdown('<meta name="google" content="notranslate">', unsafe_allow_html=True
 
 st.markdown("""
 <style>
-    div[data-testid="stTable"] th, div[data-testid="stDataFrame"] th {
+    div[data-testid="stTable"] th, div[data-testid="stDataFrame"] th,
+    div[data-testid="stDataFrame"] [role="columnheader"],
+    div[data-testid="stDataFrame"] [role="columnheader"] > div {
         white-space: pre-wrap !important;
         word-wrap: break-word !important;
         text-align: center !important;
+        justify-content: center !important;
         vertical-align: middle !important;
+    }
+    div[data-testid="stTable"] td, div[data-testid="stDataFrame"] td,
+    div[data-testid="stDataFrame"] [role="gridcell"],
+    div[data-testid="stDataFrame"] [role="gridcell"] > div {
+        text-align: center !important;
+        justify-content: center !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -1239,13 +1248,12 @@ try:
             tot_p_rect = len(df_sla_tab1_cas)
 
             cas_sum = df_sla_tab1_cas.groupby("Casuistica", as_index=False).agg(
-                Pedidos_Totales=("Pedido", "count"), 
-                Lineas_Rectificadas=("Lineas_Rectificadas_Confirmadas", "sum") if "Lineas_Rectificadas_Confirmadas" in df_sla_tab1_cas.columns else ("Pedido", "count")
+                Pedidos_Totales=("Pedido", "count")
             )
             cas_sum["% Participación Pedidos"] = (cas_sum["Pedidos_Totales"] / tot_p_rect) * 100.0 if tot_p_rect > 0 else 0.0
 
             if not df_rect.empty and "Pedido" in df_rect.columns:
-                pedidos_por_cas = df_sla_tab1_cas.set_index("Pedido")["Casuistica"].to_dict()
+                pedidos_por_cas = df_sla_tab1_cas.drop_duplicates("Pedido").set_index("Pedido")["Casuistica"].to_dict()
                 df_rect_cas_temp = df_rect.copy()
                 df_rect_cas_temp["Casuistica_Mapped"] = df_rect_cas_temp["Pedido"].map(pedidos_por_cas).fillna("Sin Clasificar")
                 
@@ -1266,9 +1274,12 @@ try:
                 )
                 grp_acep["% Aceptación"] = (grp_acep["Lin_Aprobadas"] / grp_acep["Lin_Grabadas"] * 100.0).fillna(0.0)
                 mapa_acep = grp_acep.set_index("Casuistica_Mapped")["% Aceptación"].to_dict()
+                mapa_lin_cas = grp_acep.set_index("Casuistica_Mapped")["Lin_Grabadas"].to_dict()
 
+                cas_sum["Lineas_Rectificadas"] = cas_sum["Casuistica"].map(mapa_lin_cas).fillna(0).astype(int)
                 cas_sum["% Aceptación"] = cas_sum["Casuistica"].map(mapa_acep).fillna(0.0)
             else:
+                cas_sum["Lineas_Rectificadas"] = cas_sum["Pedidos_Totales"]
                 cas_sum["% Aceptación"] = 100.0
 
             orden_cas = [
@@ -2254,11 +2265,14 @@ try:
                     ).head(15).reset_index(drop=True)
 
                     df_top15_sueltas_disp["Unidades Sueltas Totales"] = df_top15_sueltas_disp["Unidades Sueltas Totales"].apply(formatear_cantidades_limpias)
+                    df_top15_styled = df_top15_sueltas_disp[[
+                        "Tienda", "Lineas con Unidades sueltas", "Pedidos Afectados",
+                        "% Aceptación", "Unidades Sueltas Totales", "Monto Total ($)"
+                    ]].style.set_properties(**{"text-align": "center"}).set_table_styles([
+                        {"selector": "th", "props": [("text-align", "center")]}
+                    ])
                     st.dataframe(
-                        df_top15_sueltas_disp[[
-                            "Tienda", "Lineas con Unidades sueltas", "Pedidos Afectados",
-                            "% Aceptación", "Unidades Sueltas Totales", "Monto Total ($)"
-                        ]],
+                        df_top15_styled,
                         hide_index=True,
                         use_container_width=True,
                         column_config={
@@ -2313,7 +2327,7 @@ try:
                         col_art_s: "SKU",
                         col_desc_s: "Producto / Descripción",
                         "Unidades_Num": "Unid. Rectificadas",
-                        "UxB": "Cant. por Bulto (UxB)",
+                        "UxB": "UxB",
                         "Estado_Norm": "Estado (M/P/R)",
                         "Monto_Signed": "Monto ($)"
                     })
@@ -2333,7 +2347,7 @@ try:
                             "Producto / Descripción": st.column_config.Column("Producto / Descripción"),
                             "Familia": st.column_config.Column("Familia"),
                             "Unid. Rectificadas": st.column_config.Column("Unid. Rectificadas"),
-                            "Cant. por Bulto (UxB)": st.column_config.NumberColumn("Cant. por Bulto (UxB)", format="%.0f"),
+                            "UxB": st.column_config.NumberColumn("UxB", format="%.0f"),
                             "Motivo": st.column_config.Column("Motivo"),
                             "Procedencia": st.column_config.Column("Procedencia"),
                             "Estado (M/P/R)": st.column_config.Column("Estado (M/P/R)", help="'M' = Confirmada | 'P' = Pendiente | 'R' = Rechazada"),
