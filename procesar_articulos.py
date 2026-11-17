@@ -3,7 +3,7 @@
 Script ETL Automatizado y Recurrente para Cierres Mensuales:
 ============================================================
 Diseñado para incorporar automáticamente los nuevos archivos que se sumen mes a mes:
-  1. BDMVTAL (*[Bb][Dd][Mm][Vv][Tt][Aa][Ll]*.csv) -> Pedidos de nuevos meses.
+  1. BDMVTAL (*[Bb][Dd][Mm][Vv][Tt][Aa][Ll]*.csv) -> Pedidos y conteo total de líneas por pedido.
   2. AREA DE SALIDA (*[Aa]rea*[Ss]alida*.csv) -> Asignaciones de nuevos sectores.
   3. RECTIFICACIONES (*[Rr]ectif*.csv) -> Reclamos y diferencias de nuevos meses.
 
@@ -11,6 +11,9 @@ Reglas del pipeline:
   • Preserva el histórico oficial consolidado (34,752 pedidos con rectificación iniciales).
   • Actualiza dinámicamente cualquier mes nuevo o sobrescrito calculando sus casuísticas SLA completas
     (sin descartar estados P ni R para evitar pérdida de pedidos).
+  • Asigna el puntaje oficial SLA (incluyendo Sobrante Neto = 9.0 pts, descuento -1 pt).
+  • Calcula la cantidad total de líneas solicitadas por pedido desde BDMVTAL (`Lineas_Pedido`)
+    para medir el porcentaje real del pedido que fue rectificado.
   • Clasifica las áreas de salida aplicando la regla del negocio: busca en ese MISMO ALMACÉN
     el sector oficial {11, 12, 13, 14, 16, 21, 22, 23, 24, 95} que le corresponde a ese producto.
   • Integra dinámicamente factores UxB (UxB 503.csv y variantes) y Supervisores (ZONA DE SUPERVISION).
@@ -27,15 +30,15 @@ AREAS_OFICIALES = {"11", "12", "13", "14", "16", "21", "22", "23", "24", "95"}
 # Escala Oficial de Puntuación SLA
 MAPA_PUNTOS_SLA = {
     "Pedido Perfecto": 10.0,
-    "Sobrante Neto": 10.0,
+    "Sobrante Neto": 9.0,            # Descuento -1 pt
     "Sustitución Misma Subfamilia": 7.5,
     "Sustitución Distinta Subfamilia": 5.5,
     "Falta/Sobra": 4.5,
     "Faltante Neto": 4.0,
     "Error facturación master": 4.0,
-    "Etiquetas Cambiadas": 1.0,     # Descuento -9 pts
+    "Etiquetas Cambiadas": 1.0,      # Descuento -9 pts
     "Formato no entregado": 0.0,     # Descuento -10 pts
-    "Rectificación Almacén": 0.0    # Descuento -10 pts (Grabada por Almacén 'G')
+    "Rectificación Almacén": 0.0     # Descuento -10 pts (Grabada por Almacén 'G')
 }
 
 def corregir_encoding_texto(texto):
@@ -504,7 +507,9 @@ def evaluar_casuisticas_sla_pedidos(df_pedidos_eval, df_rect_eval):
     return df_pedidos_eval
 
 def procesar_pedidos_sla(carpeta=".", df_rect=None, mapa_sup=None, mapa_ped_area=None):
-    """Combina el histórico protegido cerrado (Jun-Sep) con los meses activos/nuevos cargados por CSV."""
+    """Combina el histórico protegido cerrado (Jun-Sep) con los meses activos/nuevos cargados por CSV
+       y suma el total de líneas solicitadas por pedido desde los archivos BDMVTAL (`Lineas_Pedido`).
+    """
     
     # 1. Cargar Base Histórica Oficial (Junio a Septiembre o base cerrada protegida)
     df_hist = pd.DataFrame()
@@ -525,7 +530,7 @@ def procesar_pedidos_sla(carpeta=".", df_rect=None, mapa_sup=None, mapa_ped_area
             elif df_hist.empty:
                 df_hist = df_temp
 
-    # 2. Cargar dinámicamente todos los archivos BDMVTAL (presentes y futuros)
+    # 2. Cargar dinámicamente todos los archivos BDMVTAL (presentes y futuros) y contar líneas por pedido
     patrones_bdm = [
         os.path.join(carpeta, "*[Bb][Dd][Mm][Vv][Tt][Aa][Ll]*.csv"),
         os.path.join(carpeta, "Datos_mensuales", "*[Bb][Dd][Mm][Vv][Tt][Aa][Ll]*.csv")
@@ -537,33 +542,57 @@ def procesar_pedidos_sla(carpeta=".", df_rect=None, mapa_sup=None, mapa_ped_area
 
     df_nuevos_meses = pd.DataFrame()
     meses_actualizados = set()
+    conteos_bdmvtal_lista = []
 
     if archivos_bdm_unicos:
         lista_bdm_dfs = []
         for arch in archivos_bdm_unicos:
-            # Detectar mes 10, 11, 12, etc. o archivos actualizados recientemente
-            base_name = os.path.basename(arch).lower()
-            # Si el archivo corresponde a Octubre en adelante (o meses que se van sumando):
-            # Se detecta si el mes está en el nombre (ej. _10_, _11_, _12_, _01_, etc.)
             print(f"📊 Leyendo archivo de pedidos/ventas BDMVTAL: {arch}")
             try:
                 df_t = leer_csv_robusto(arch)
                 df_t.columns = df_t.columns.str.strip()
 
+                # Capturar explícitamente la Columna F (índice 5, 0-based) antes de renombrar
+                col_f_original = df_t.columns[5] if len(df_t.columns) > 5 else None
+
                 mapa_c = {}
-                for c in df_t.columns:
+                for idx_c, c in enumerate(df_t.columns):
                     clow = c.lower().replace(".", "").replace("_", " ").strip()
-                    if "pedido" in clow: mapa_c[c] = "Pedido"
+                    if idx_c == 5:
+                        mapa_c[c] = "Lineas_Pedido"
+                    elif "pedido" in clow: mapa_c[c] = "Pedido"
                     elif "tienda" in clow or "sucursal" in clow or "cod suc des" in clow: mapa_c[c] = "Tienda"
                     elif "almac" in clow or clow == "cd": mapa_c[c] = "Almacen"
                     elif "fech" in clow: mapa_c[c] = "Fecha_DT"
                     elif "gest" in clow or "zona" in clow: mapa_c[c] = "Gestion"
+                    elif any(k in clow for k in ["linea", "línea", "cant lin", "q lin", "registros"]) and "Lineas_Pedido" not in mapa_c.values():
+                        mapa_c[c] = "Lineas_Pedido"
                     elif any(k in clow for k in ["imp", "monto", "pvp"]): mapa_c[c] = "Importe"
+
+                if "Lineas_Pedido" not in mapa_c.values() and col_f_original:
+                    mapa_c[col_f_original] = "Lineas_Pedido"
+
                 df_t = df_t.rename(columns=mapa_c)
+                df_t = df_t.loc[:, ~df_t.columns.duplicated()]
                 
                 df_t["Pedido"] = df_t["Pedido"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
                 df_t["Tienda"] = df_t["Tienda"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
                 df_t["Almacen"] = df_t["Almacen"].fillna("501").astype(str).str.strip()
+
+                # ⚡ LEER Y SUMAR LA COLUMNA F (CANTIDAD DE LÍNEAS YA AGRUPADA POR PEDIDO EN BDMVTAL)
+                if "Lineas_Pedido" in df_t.columns:
+                    df_t["Lineas_Pedido"] = pd.to_numeric(
+                        df_t["Lineas_Pedido"].astype(str).str.strip().str.replace(",", "."),
+                        errors="coerce"
+                    ).fillna(0).astype(int)
+                else:
+                    df_t["Lineas_Pedido"] = 1
+
+                df_t_valid = df_t[~df_t["Pedido"].isin(["", "0", "nan", "None"])]
+                if not df_t_valid.empty:
+                    vc_ped = df_t_valid.groupby(["Almacen", "Pedido"], as_index=False)["Lineas_Pedido"].sum()
+                    conteos_bdmvtal_lista.append(vc_ped)
+                    print(f"   -> Sumadas {vc_ped['Lineas_Pedido'].sum():,} líneas (Columna F) en {len(vc_ped):,} pedidos desde {os.path.basename(arch)}.")
 
                 if "Fecha_DT" in df_t.columns:
                     dt = normalizar_fechas_serie(df_t["Fecha_DT"])
@@ -577,25 +606,45 @@ def procesar_pedidos_sla(carpeta=".", df_rect=None, mapa_sup=None, mapa_ped_area
                 meses_en_arch = set(df_t["Mes"].dropna().unique())
                 meses_actualizados.update(meses_en_arch)
 
+                # Deduplicar cabecera de pedido antes de evaluar casuísticas SLA
+                df_t_ped = df_t.drop_duplicates(subset=["Almacen", "Pedido"]).copy()
+
                 # Calcular las casuísticas SLA para estos pedidos nuevos usando el detalle de rectificaciones
                 if df_rect is not None and not df_rect.empty:
-                    peds_con_rect = set(df_rect["Pedido"].unique())
-                    df_r_sub = df_rect[df_rect["Pedido"].isin(set(df_t["Pedido"]))].copy()
-                    df_t = evaluar_casuisticas_sla_pedidos(df_t, df_r_sub)
+                    df_r_sub = df_rect[df_rect["Pedido"].isin(set(df_t_ped["Pedido"]))].copy()
+                    df_t_ped = evaluar_casuisticas_sla_pedidos(df_t_ped, df_r_sub)
+                else:
+                    df_t_ped["Casuistica"] = "Pedido Perfecto"
 
-                lista_bdm_dfs.append(df_t)
+                lista_bdm_dfs.append(df_t_ped)
             except Exception as e:
                 print(f"   ⚠️ Error en {arch}: {e}")
 
         if lista_bdm_dfs:
-            df_nuevos_meses = pd.concat(lista_bdm_dfs, ignore_index=True).drop_duplicates(subset=["Pedido"])
+            df_nuevos_meses = pd.concat(lista_bdm_dfs, ignore_index=True).drop_duplicates(subset=["Almacen", "Pedido"])
+
+    # Consolidar diccionario maestro de líneas por pedido desde BDMVTAL (Columna F)
+    mapa_lineas_bdmvtal_alm = {}
+    mapa_lineas_bdmvtal = {}
+    if conteos_bdmvtal_lista:
+        df_bd_lineas_alm = pd.concat(conteos_bdmvtal_lista, ignore_index=True).groupby(["Almacen", "Pedido"], as_index=False)["Lineas_Pedido"].sum()
+        mapa_lineas_bdmvtal_alm = df_bd_lineas_alm.set_index(["Almacen", "Pedido"])["Lineas_Pedido"].to_dict()
+        df_bd_lineas = df_bd_lineas_alm.groupby("Pedido", as_index=False)["Lineas_Pedido"].sum()
+        mapa_lineas_bdmvtal = df_bd_lineas.set_index("Pedido")["Lineas_Pedido"].to_dict()
+        # Guardar caché auxiliar ligero para el tablero (incluyendo Almacen_Key y esquema v3_colF)
+        try:
+            df_bd_save = df_bd_lineas_alm.rename(columns={"Almacen": "Almacen_Key", "Pedido": "Pedido_Key"}).copy()
+            df_bd_save["Esquema_BD"] = "v3_colF"
+            df_bd_save.to_parquet("Tablero_Lineas_Pedido_BDMVTAL.parquet", index=False)
+            print(f"📏 Guardado Tablero_Lineas_Pedido_BDMVTAL.parquet ({len(df_bd_save):,} registros Almacén-Pedido con Columna F).")
+        except Exception:
+            pass
 
     # 3. Fusión Inteligente:
     # Si tenemos meses nuevos (ej. Mes 10, 11, etc.), se reemplazan esos meses específicos
     # manteniendo el histórico de meses cerrados anteriores intacto (Jun-Sep).
     if not df_hist.empty:
         if not df_nuevos_meses.empty and meses_actualizados:
-            # Filtrar del histórico aquellos meses que se están actualizando por CSV
             meses_reemplazo = [m for m in meses_actualizados if m >= 10]  # Octubre en adelante se actualiza
             if meses_reemplazo:
                 df_hist_preservado = df_hist[~df_hist["Mes"].isin(meses_reemplazo)].copy()
@@ -614,6 +663,18 @@ def procesar_pedidos_sla(carpeta=".", df_rect=None, mapa_sup=None, mapa_ped_area
     df_p["Pedido"] = df_p["Pedido"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
     df_p["Tienda"] = df_p["Tienda"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
     df_p["Almacen"] = df_p["Almacen"].fillna("501").astype(str).str.strip()
+
+    # ⚡ ASIGNACIÓN DE TOTAL DE LÍNEAS POR PEDIDO (Lineas_Pedido)
+    if "Lineas_Pedido" not in df_p.columns:
+        df_p["Lineas_Pedido"] = 0
+    df_p["Lineas_Pedido"] = pd.to_numeric(df_p["Lineas_Pedido"], errors="coerce").fillna(0).astype(int)
+    if mapa_lineas_bdmvtal_alm or mapa_lineas_bdmvtal:
+        idx_ap = pd.MultiIndex.from_frame(df_p[["Almacen", "Pedido"]])
+        lineas_ap = pd.Series(idx_ap.map(mapa_lineas_bdmvtal_alm), index=df_p.index)
+        lineas_p = df_p["Pedido"].map(mapa_lineas_bdmvtal)
+        lineas_mapeadas = lineas_ap.fillna(lineas_p)
+        df_p["Lineas_Pedido"] = np.where(lineas_mapeadas.notna(), lineas_mapeadas.fillna(0).astype(int), df_p["Lineas_Pedido"])
+    print(f"📏 Total de líneas pedidas vinculadas en SLA: {df_p['Lineas_Pedido'].sum():,} líneas en {(df_p['Lineas_Pedido'] > 0).sum():,} pedidos.")
 
     if "Fecha_DT" in df_p.columns:
         dt = normalizar_fechas_serie(df_p["Fecha_DT"])
@@ -649,7 +710,7 @@ def procesar_pedidos_sla(carpeta=".", df_rect=None, mapa_sup=None, mapa_ped_area
             df_p.loc[mask_g, "Casuistica"] = "Rectificación Almacén"
             print(f"🏢 Asignados {mask_g.sum():,} pedidos con 'Rectificación Almacén' (Procedencia 'G', 0.0 Pts)")
 
-    # Aplicación de Puntos SLA
+    # Aplicación de Puntos SLA (incluye Sobrante Neto = 9.0 pts)
     df_p["Puntos_Obtenidos"] = df_p["Casuistica"].map(MAPA_PUNTOS_SLA).fillna(10.0)
 
     print(f"📊 Total Pedidos con Rectificación: {(df_p['Casuistica'] != 'Pedido Perfecto').sum():,} ({(df_p['Casuistica'] != 'Pedido Perfecto').sum()/len(df_p)*100:.2f}%)")
@@ -728,7 +789,8 @@ def auditar_todos_los_parquets():
     parquets = [
         ("1. Pedidos SLA", "Tablero_SLA_Pedidos.parquet"),
         ("2. Rectificaciones Detalle", "Tablero_Rectificaciones_Detalle.parquet"),
-        ("3. Anulaciones Detalle", "Tablero_Anulaciones_Detalle.parquet")
+        ("3. Anulaciones Detalle", "Tablero_Anulaciones_Detalle.parquet"),
+        ("4. Líneas por Pedido (BDMVTAL)", "Tablero_Lineas_Pedido_BDMVTAL.parquet")
     ]
     mapa_meses = {
         1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio",
