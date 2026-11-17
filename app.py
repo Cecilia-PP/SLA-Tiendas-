@@ -2547,17 +2547,19 @@ try:
                             grp_anul["Etiqueta_Texto"] = grp_anul["Cant_Pedidos"].apply(lambda v: f"<b>{int(v):,}</b><br>Pedidos")
                             alm_nombre_tit = grp_anul["Etiqueta_Almacen"].iloc[0] if not grp_anul.empty else "Almacén"
                             titulo_graf_anul = f"<b>Evolución Mensual de Pedidos Anulados - {alm_nombre_tit}</b>"
-                            hover_dict_anul = {"Pedidos": ":,", "Cant_Pedidos": False}
+                            custom_cols_anul = ["Cant_Pedidos"]
+                            hover_tmpl_anul = "<b>%{fullData.name}</b><br>Mes: %{x}<br>Pedidos: <b>%{customdata[0]:,}</b><extra></extra>"
                         else:
                             # Modo Varios Almacenes: Mostrar Distribución Porcentual Apilada
                             eje_y_anul = "Porcentaje"
                             titulo_y_anul = "Porcentaje de Participación (%)"
                             rango_y_anul = [0, 100]
                             tot_mes_anul = grp_anul.groupby(["Mes_Num", "Nombre_Mes"])["Cant_Pedidos"].transform("sum")
-                            grp_anul["Porcentaje"] = (grp_anul["Cant_Pedidos"] / tot_mes_anul * 100.0).fillna(0.0)
-                            grp_anul["Etiqueta_Texto"] = grp_anul.apply(lambda r: f"<b>{r['Porcentaje']:.1f}%</b><br>({int(r['Cant_Pedidos']):,} Pedidos)", axis=1)
+                            grp_anul["Porcentaje"] = ((grp_anul["Cant_Pedidos"] / tot_mes_anul) * 100.0).fillna(0.0).round(2)
+                            grp_anul["Etiqueta_Texto"] = grp_anul.apply(lambda r: f"<b>{r['Porcentaje']:.2f}%</b><br>({int(r['Cant_Pedidos']):,} Pedidos)", axis=1)
                             titulo_graf_anul = "<b>Distribución Porcentual y Cantidad por Almacén - Pedidos Anulados</b>"
-                            hover_dict_anul = {"Pedidos": ":,", "Porcentaje": ":.2f%", "Cant_Pedidos": False}
+                            custom_cols_anul = ["Porcentaje", "Cant_Pedidos"]
+                            hover_tmpl_anul = "<b>%{fullData.name}</b><br>Mes: %{x}<br>Participación: <b>%{customdata[0]:.2f}%</b><br>Pedidos: <b>%{customdata[1]:,}</b><extra></extra>"
 
                         fig_apilado_anul = px.bar(
                             grp_anul,
@@ -2568,10 +2570,10 @@ try:
                             text="Etiqueta_Texto",
                             color_discrete_map=mapa_colores_alm_g,
                             barmode="stack",
-                            hover_data=hover_dict_anul
+                            custom_data=custom_cols_anul
                         )
 
-                        fig_apilado_anul.update_traces(textposition='inside')
+                        fig_apilado_anul.update_traces(textposition='inside', hovertemplate=hover_tmpl_anul)
                         layout_dict_anul = dict(
                             xaxis=dict(title="Mes", categoryorder="array", categoryarray=orden_meses_anul),
                             yaxis=dict(title=titulo_y_anul),
@@ -2693,17 +2695,19 @@ try:
                             grp_aprob["Etiqueta_Texto"] = grp_aprob["Cant_Pedidos"].apply(lambda v: f"<b>{int(v):,}</b><br>Pedidos")
                             alm_nombre_tit = grp_aprob["Etiqueta_Almacen"].iloc[0] if not grp_aprob.empty else "Almacén"
                             titulo_graf_aprob = f"<b>Evolución Mensual de Pedidos Aprobados - {alm_nombre_tit}</b>"
-                            hover_dict_aprob = {"Pedidos": ":,", "Cant_Pedidos": False}
+                            custom_cols_aprob = ["Cant_Pedidos"]
+                            hover_tmpl_aprob = "<b>%{fullData.name}</b><br>Mes: %{x}<br>Pedidos: <b>%{customdata[0]:,}</b><extra></extra>"
                         else:
                             # Modo Varios Almacenes: Mostrar Distribución Porcentual Apilada
                             eje_y_aprob = "Porcentaje"
                             titulo_y_aprob = "Porcentaje de Participación (%)"
                             rango_y_aprob = [0, 100]
                             tot_mes_aprob = grp_aprob.groupby(["Mes_Num", "Nombre_Mes"])["Cant_Pedidos"].transform("sum")
-                            grp_aprob["Porcentaje"] = (grp_aprob["Cant_Pedidos"] / tot_mes_aprob * 100.0).fillna(0.0)
-                            grp_aprob["Etiqueta_Texto"] = grp_aprob.apply(lambda r: f"<b>{r['Porcentaje']:.1f}%</b><br>({int(r['Cant_Pedidos']):,} Pedidos)", axis=1)
+                            grp_aprob["Porcentaje"] = ((grp_aprob["Cant_Pedidos"] / tot_mes_aprob) * 100.0).fillna(0.0).round(2)
+                            grp_aprob["Etiqueta_Texto"] = grp_aprob.apply(lambda r: f"<b>{r['Porcentaje']:.2f}%</b><br>({int(r['Cant_Pedidos']):,} Pedidos)", axis=1)
                             titulo_graf_aprob = "<b>Distribución Porcentual y Cantidad por Almacén - Pedidos Aprobados</b>"
-                            hover_dict_aprob = {"Pedidos": ":,", "Porcentaje": ":.2f%", "Cant_Pedidos": False}
+                            custom_cols_aprob = ["Porcentaje", "Cant_Pedidos"]
+                            hover_tmpl_aprob = "<b>%{fullData.name}</b><br>Mes: %{x}<br>Participación: <b>%{customdata[0]:.2f}%</b><br>Pedidos: <b>%{customdata[1]:,}</b><extra></extra>"
 
                         fig_apilado_aprob = px.bar(
                             grp_aprob,
@@ -2714,10 +2718,10 @@ try:
                             text="Etiqueta_Texto",
                             color_discrete_map=mapa_colores_alm_g,
                             barmode="stack",
-                            hover_data=hover_dict_aprob
+                            custom_data=custom_cols_aprob
                         )
 
-                        fig_apilado_aprob.update_traces(textposition='inside')
+                        fig_apilado_aprob.update_traces(textposition='inside', hovertemplate=hover_tmpl_aprob)
                         layout_dict_aprob = dict(
                             xaxis=dict(title="Mes", categoryorder="array", categoryarray=orden_meses_aprob),
                             yaxis=dict(title=titulo_y_aprob),
