@@ -150,10 +150,11 @@ def cargar_mapeo_area_salida(carpeta="."):
         archivos.extend(glob.glob(pat))
     archivos_unicos = sorted(list(set(archivos)))
     
+    mapa_alm_pedido_area = {}
     mapa_pedido_area = {}
     if not archivos_unicos:
         print("⚠️ No se encontraron archivos de Área de Salida.")
-        return mapa_pedido_area
+        return mapa_alm_pedido_area, mapa_pedido_area
 
     print(f"📦 Procesando {len(archivos_unicos)} archivos de Área de Salida encontrados...")
     for arch in archivos_unicos:
@@ -162,21 +163,28 @@ def cargar_mapeo_area_salida(carpeta="."):
             df_temp = leer_csv_robusto(arch)
             df_temp.columns = df_temp.columns.str.strip().str.upper()
             
+            col_alm = next((c for c in df_temp.columns if any(k in c for k in ["ALMAC", "CD", "CENTRO"])), None)
             col_p = next((c for c in df_temp.columns if any(k in c for k in ["PEDIDO", "Nº DE PEDIDO", "Nº PEDIDO", "NRO_PEDIDO", "NRO PEDIDO"])), None)
             col_a = next((c for c in df_temp.columns if any(k in c for k in ["AREA", "ÁREA", "SALIDA", "SECTOR"])), None)
 
             if col_p and col_a:
                 df_temp["Ped_Clean"] = df_temp[col_p].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
                 df_temp["Area_Clean"] = df_temp[col_a].astype(str).str.strip()
+                df_temp["Alm_Clean"] = df_temp[col_alm].astype(str).str.strip().str.replace(".0", "", regex=False) if col_alm else ""
                 df_val = df_temp[(df_temp["Ped_Clean"] != "") & (df_temp["Area_Clean"].isin(AREAS_OFICIALES))]
                 if not df_val.empty:
+                    if col_alm:
+                        df_val_alm = df_val[df_val["Alm_Clean"] != ""]
+                        if not df_val_alm.empty:
+                            dict_ap = df_val_alm.drop_duplicates(["Alm_Clean", "Ped_Clean"]).set_index(["Alm_Clean", "Ped_Clean"])["Area_Clean"].to_dict()
+                            mapa_alm_pedido_area.update(dict_ap)
                     dict_ped = df_val.drop_duplicates("Ped_Clean").set_index("Ped_Clean")["Area_Clean"].to_dict()
                     mapa_pedido_area.update(dict_ped)
         except Exception as e:
             print(f"   ⚠️ Error en {arch}: {e}")
 
-    print(f"   -> Mapeados {len(mapa_pedido_area):,} pedidos con Área Oficial desde los archivos.")
-    return mapa_pedido_area
+    print(f"   -> Mapeados {len(mapa_alm_pedido_area):,} pares (Almacén, Pedido) y {len(mapa_pedido_area):,} pedidos con Área Oficial desde los CSV.")
+    return mapa_alm_pedido_area, mapa_pedido_area
 
 # ==============================================================================
 # 3. MAESTRO DE ARTÍCULOS Y FACTORES UXB (TODOS LOS ARCHIVOS UXB)
@@ -365,73 +373,101 @@ def procesar_rectificaciones(carpeta=".", df_maestro=None, mapa_sup=None, mapa_p
         df_r["Responsable_Tienda"] = "Sin Asignar"
 
     # =========================================================================
-    # ⚡ ASIGNACIÓN INTELIGENTE DE ÁREAS (ALMACÉN + ARTÍCULO)
+    # ⚡ ASIGNACIÓN DE ÁREAS DESDE CSV + HISTÓRICO DEL SKU EN ESE MISMO ALMACÉN
     # =========================================================================
-    mapa_p = mapa_ped_area if mapa_ped_area else {}
+    if isinstance(mapa_ped_area, tuple):
+        mapa_ap, mapa_p = mapa_ped_area
+    else:
+        mapa_ap, mapa_p = {}, (mapa_ped_area if mapa_ped_area else {})
 
-    # Paso 1: Asignar directamente por Pedido si viene en los archivos de área
-    df_r["Area_Raw"] = df_r["Pedido"].map(mapa_p).fillna("")
+    # Paso 1: Match directo por (Almacén, Pedido) desde los CSV oficiales de Área de Salida
+    idx_r_ap = pd.MultiIndex.from_frame(df_r[["Almacen", "Pedido"]])
+    s_area_ap = pd.Series(idx_r_ap.map(mapa_ap), index=df_r.index) if mapa_ap else pd.Series(np.nan, index=df_r.index)
+    s_area_p = df_r["Pedido"].map(mapa_p) if mapa_p else pd.Series(np.nan, index=df_r.index)
+    df_r["Area_Raw"] = s_area_ap.fillna(s_area_p).fillna("")
     df_r["Area_Salida"] = np.where(df_r["Area_Raw"].isin(AREAS_OFICIALES), df_r["Area_Raw"], "")
 
-    # Paso 2: Matriz histórica viva: relación (Almacén, Artículo) -> Área Oficial en pedidos con área
-    df_conocidos = df_r[df_r["Area_Salida"] != ""]
-    mapa_alm_art = {}
-    mapa_art_global = {}
+    # Paso 2: Construir histórico por (Almacén, Artículo) SOLO desde las líneas que SÍ tuvieron match oficial en CSV
+    df_con_area_csv = df_r[df_r["Area_Salida"].isin(AREAS_OFICIALES)]
+    mapa_hist_alm_sku = {}
+    if not df_con_area_csv.empty:
+        mapa_hist_alm_sku = (
+            df_con_area_csv.groupby(["Almacen", "Artículo"])["Area_Salida"]
+            .agg(lambda s: s.mode().iloc[0] if not s.empty else "")
+            .to_dict()
+        )
 
-    if not df_conocidos.empty:
-        # Moda por Almacén y Artículo
-        grp_aa = df_conocidos.groupby(["Almacen", "Artículo"])["Area_Salida"].agg(lambda s: s.mode().iloc[0] if not s.empty else "")
-        mapa_alm_art = grp_aa.to_dict()
+    # Paso 3: Rellenar las rectificaciones sin match en CSV usando el histórico en ESE MISMO ALMACÉN:
+    #         1° por (Almacén, Artículo) -> 2° por (Almacén, Subfamilia) -> 3° por (Almacén, Familia)
+    mask_sin_area = ~df_r["Area_Salida"].isin(AREAS_OFICIALES)
+    if mask_sin_area.any() and mapa_hist_alm_sku:
+        idx_sin = pd.MultiIndex.from_frame(df_r.loc[mask_sin_area, ["Almacen", "Artículo"]])
+        s_hist_ap = pd.Series(idx_sin.map(mapa_hist_alm_sku), index=df_r.loc[mask_sin_area].index).fillna("")
+        df_r.loc[mask_sin_area, "Area_Salida"] = np.where(s_hist_ap.isin(AREAS_OFICIALES), s_hist_ap, "")
 
-        # Moda general por Artículo
-        grp_ag = df_conocidos.groupby("Artículo")["Area_Salida"].agg(lambda s: s.mode().iloc[0] if not s.empty else "")
-        mapa_art_global = grp_ag.to_dict()
+    mask_sin_area = ~df_r["Area_Salida"].isin(AREAS_OFICIALES)
+    if mask_sin_area.any() and not df_con_area_csv.empty and "Subfamilia" in df_r.columns:
+        df_con_sf = df_con_area_csv[df_con_area_csv["Subfamilia"].notna() & (~df_con_area_csv["Subfamilia"].isin(["", "nan", "None"]))]
+        if not df_con_sf.empty:
+            mapa_hist_alm_sf = (
+                df_con_sf.groupby(["Almacen", "Subfamilia"])["Area_Salida"]
+                .agg(lambda s: s.mode().iloc[0] if not s.empty else "")
+                .to_dict()
+            )
+            idx_sin_sf = pd.MultiIndex.from_frame(df_r.loc[mask_sin_area, ["Almacen", "Subfamilia"]])
+            s_hist_sf = pd.Series(idx_sin_sf.map(mapa_hist_alm_sf), index=df_r.loc[mask_sin_area].index).fillna("")
+            df_r.loc[mask_sin_area, "Area_Salida"] = np.where(s_hist_sf.isin(AREAS_OFICIALES), s_hist_sf, "")
 
-    # Paso 3: Reclasificación según la regla de negocio:
-    # "fijarse en ese mismo almacén y los productos que tiene en los pedidos con área y asignarle el área de ese almacén"
-    def reclasificar_linea(row):
-        area_actual = row["Area_Salida"]
-        if area_actual in AREAS_OFICIALES:
-            return area_actual
+    mask_sin_area = ~df_r["Area_Salida"].isin(AREAS_OFICIALES)
+    if mask_sin_area.any() and not df_con_area_csv.empty and "Familia" in df_r.columns:
+        df_con_fam = df_con_area_csv[df_con_area_csv["Familia"].notna() & (~df_con_area_csv["Familia"].isin(["", "nan", "None"]))]
+        if not df_con_fam.empty:
+            mapa_hist_alm_fam = (
+                df_con_fam.groupby(["Almacen", "Familia"])["Area_Salida"]
+                .agg(lambda s: s.mode().iloc[0] if not s.empty else "")
+                .to_dict()
+            )
+            idx_sin_fam = pd.MultiIndex.from_frame(df_r.loc[mask_sin_area, ["Almacen", "Familia"]])
+            s_hist_fam = pd.Series(idx_sin_fam.map(mapa_hist_alm_fam), index=df_r.loc[mask_sin_area].index).fillna("")
+            df_r.loc[mask_sin_area, "Area_Salida"] = np.where(s_hist_fam.isin(AREAS_OFICIALES), s_hist_fam, "Sin Area")
+        else:
+            df_r.loc[mask_sin_area, "Area_Salida"] = "Sin Area"
+    else:
+        df_r.loc[mask_sin_area, "Area_Salida"] = "Sin Area"
 
-        alm = str(row.get("Almacen", "")).strip()
-        art = str(row.get("Artículo", "")).strip()
+    # Paso 4 (Excepción puntual solicitada solo para casos remanentes en "Sin Area"):
+    mask_rem = df_r["Area_Salida"] == "Sin Area"
+    if mask_rem.any():
+        # Determinar el área habitual de artículos de limpieza en cada almacén (fallback "11")
+        mapa_limp_alm = {}
+        df_ok_l = df_r[df_r["Area_Salida"].isin(AREAS_OFICIALES)]
+        if not df_ok_l.empty and "Descripción" in df_ok_l.columns:
+            mask_l_desc = df_ok_l["Descripción"].astype(str).str.upper().str.contains("LIMPIEZA|LAVANDINA|DETERGENTE|JABON|PIEDRITAS|PEDRITAS", na=False)
+            if mask_l_desc.any():
+                mapa_limp_alm = (
+                    df_ok_l[mask_l_desc].groupby("Almacen")["Area_Salida"]
+                    .agg(lambda s: s.mode().iloc[0] if not s.empty else "11")
+                    .to_dict()
+                )
 
-        # A) Buscar ese producto en ESE MISMO ALMACÉN
-        if (alm, art) in mapa_alm_art and mapa_alm_art[(alm, art)] in AREAS_OFICIALES:
-            return mapa_alm_art[(alm, art)]
+        desc_rem = df_r.loc[mask_rem, "Descripción"].fillna("").astype(str).str.upper() if "Descripción" in df_r.columns else pd.Series("", index=df_r.loc[mask_rem].index)
+        sku_rem = df_r.loc[mask_rem, "Artículo"].fillna("").astype(str).str.strip()
+        alm_rem = df_r.loc[mask_rem, "Almacen"].fillna("501").astype(str).str.strip()
 
-        # B) Buscar ese producto a nivel general en la cadena
-        if art in mapa_art_global and mapa_art_global[art] in AREAS_OFICIALES:
-            return mapa_art_global[art]
+        nuevas_areas = []
+        for idx_r, d_txt, s_txt, a_txt in zip(df_r.loc[mask_rem].index, desc_rem, sku_rem, alm_rem):
+            if "CONGELAD" in d_txt or "MERLUZA" in d_txt:
+                nuevas_areas.append("22")
+            elif "LEBERWURST" in d_txt:
+                nuevas_areas.append("21")
+            elif "VINO" in d_txt or "TINTO DE VERANO" in d_txt or "VEGETALES DESHIDRATADOS" in d_txt or s_txt == "285777":
+                nuevas_areas.append("11")
+            elif "PEDRITAS SANITARIAS" in d_txt or "PIEDRITAS SANITARIAS" in d_txt or s_txt in {"308410", "300436"}:
+                nuevas_areas.append(mapa_limp_alm.get(a_txt, "11"))
+            else:
+                nuevas_areas.append("Sin Area")
+        df_r.loc[mask_rem, "Area_Salida"] = nuevas_areas
 
-        # C) Mapeo controlado por Familia hacia áreas oficiales (evita secciones erróneas 1, 2, 5, etc.)
-        fam = str(row.get("Familia", "")).upper()
-        if any(k in fam for k in ["LACTEO", "FRESCO", "FIAMBRE", "QUESO", "POLLO", "CARNE"]):
-            return "21"
-        elif any(k in fam for k in ["CONGELADO"]):
-            return "22"
-        elif any(k in fam for k in ["FRUTA", "VERDURA", "PANADERIA"]):
-            return "23"
-        elif any(k in fam for k in ["BAZAR", "TEXTIL", "HOGAR"]):
-            return "14"
-        elif any(k in fam for k in ["LIMPIEZA", "PERFUMERIA", "DROGUERIA"]):
-            return "16"
-        elif any(k in fam for k in ["BEBIDA", "LIQUIDO", "CERVEZA", "VINO", "AGUA"]):
-            return "95"
-        elif any(k in fam for k in ["GOLOSINA", "SNACK", "CANDY"]):
-            return "12"
-        elif any(k in fam for k in ["ROTISERIA", "FIAMBRERIA"]):
-            return "13"
-        elif fam and fam not in ["", "NAN", "NONE", "SIN CLASIFICAR"]:
-            return "11"
-
-        if alm == "506":
-            return "24"
-
-        return "11"
-
-    df_r["Area_Salida"] = df_r.apply(reclasificar_linea, axis=1)
     df_r.drop(columns=["Area_Raw"], inplace=True, errors="ignore")
 
     df_r.to_parquet("Tablero_Rectificaciones_Detalle.parquet", index=False)
@@ -448,7 +484,7 @@ def procesar_rectificaciones(carpeta=".", df_maestro=None, mapa_sup=None, mapa_p
 # 5. PEDIDOS SLA: PRESERVACIÓN HISTÓRICA Y ACTUALIZACIÓN MENSUAL AUTOMÁTICA
 # ==============================================================================
 def evaluar_casuisticas_sla_pedidos(df_pedidos_eval, df_rect_eval):
-    """Calcula la casuística SLA para un lote de pedidos.
+    """Calcula la casuística SLA por clave compuesta (Almacén, Pedido).
        Prioriza 'Rectificación Almacén' (-10 pts) si el pedido tiene al menos 1 línea con Procedencia 'G'.
     """
     if df_pedidos_eval.empty or df_rect_eval is None or df_rect_eval.empty:
@@ -456,12 +492,15 @@ def evaluar_casuisticas_sla_pedidos(df_pedidos_eval, df_rect_eval):
         return df_pedidos_eval
         
     df_all_r = df_rect_eval.copy()
+    df_all_r["Almacen"] = df_all_r["Almacen"].fillna("501").astype(str).str.strip()
+    df_all_r["Pedido"] = df_all_r["Pedido"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
     col_proc = "Procedencia" if "Procedencia" in df_all_r.columns else None
 
-    # 1. Identificar pedidos con rectificaciones grabadas por almacén ('G')
-    pedidos_g = set()
+    # 1. Identificar pares (Almacén, Pedido) con rectificaciones grabadas por almacén ('G')
+    pares_g = set()
     if col_proc:
-        pedidos_g = set(df_all_r[df_all_r[col_proc].astype(str).str.strip().str.upper() == "G"]["Pedido"].dropna().unique())
+        df_g = df_all_r[df_all_r[col_proc].astype(str).str.strip().str.upper() == "G"]
+        pares_g = set(zip(df_g["Almacen"], df_g["Pedido"]))
 
     # 2. Filtrar líneas grabadas por tienda ('T') para evaluar casuísticas estándar
     df_v = df_all_r[df_all_r[col_proc].astype(str).str.strip().str.upper() == "T"].copy() if col_proc else df_all_r.copy()
@@ -471,39 +510,43 @@ def evaluar_casuisticas_sla_pedidos(df_pedidos_eval, df_rect_eval):
     df_v["Es_Falta"] = df_v["Motivo_Norm"] == "F"
     df_v["Es_Sobra"] = df_v["Motivo_Norm"] == "S"
 
-    mapa_cas = {}
-    for ped, grp in df_v.groupby("Pedido"):
+    mapa_cas_ap = {}
+    for (alm, ped), grp in df_v.groupby(["Almacen", "Pedido"]):
         cf = grp["Es_Falta"].sum()
         cs = grp["Es_Sobra"].sum()
         ct = cf + cs
         
         if ct == 0:
-            mapa_cas[ped] = "Pedido Perfecto"
+            mapa_cas_ap[(alm, ped)] = "Pedido Perfecto"
         elif cf == 0 and cs > 0:
-            mapa_cas[ped] = "Sobrante Neto"
+            mapa_cas_ap[(alm, ped)] = "Sobrante Neto"
         elif cs == 0 and cf > 0:
             if cf <= 10:
-                mapa_cas[ped] = "Faltante Neto"
+                mapa_cas_ap[(alm, ped)] = "Faltante Neto"
             else:
-                mapa_cas[ped] = "Formato no entregado"
+                mapa_cas_ap[(alm, ped)] = "Formato no entregado"
         else:
             if ct >= 12 and cf != cs:
-                mapa_cas[ped] = "Etiquetas Cambiadas"
+                mapa_cas_ap[(alm, ped)] = "Etiquetas Cambiadas"
             elif cf == cs and ct < 12:
                 sub_f = set(grp[grp["Es_Falta"]]["Subfamilia"].dropna().unique())
                 sub_s = set(grp[grp["Es_Sobra"]]["Subfamilia"].dropna().unique())
                 if sub_f and sub_f == sub_s:
-                    mapa_cas[ped] = "Sustitución Misma Subfamilia"
+                    mapa_cas_ap[(alm, ped)] = "Sustitución Misma Subfamilia"
                 else:
-                    mapa_cas[ped] = "Sustitución Distinta Subfamilia"
+                    mapa_cas_ap[(alm, ped)] = "Sustitución Distinta Subfamilia"
             else:
-                mapa_cas[ped] = "Falta/Sobra"
+                mapa_cas_ap[(alm, ped)] = "Falta/Sobra"
 
     # Prioridad absoluta: si el pedido tiene rectificación grabada por Almacén ('G'), se asigna 'Rectificación Almacén'
-    for p_g in pedidos_g:
-        mapa_cas[p_g] = "Rectificación Almacén"
+    for pair_g in pares_g:
+        mapa_cas_ap[pair_g] = "Rectificación Almacén"
 
-    df_pedidos_eval["Casuistica"] = df_pedidos_eval["Pedido"].map(mapa_cas).fillna("Pedido Perfecto")
+    idx_eval = pd.MultiIndex.from_arrays([
+        df_pedidos_eval["Almacen"].fillna("501").astype(str).str.strip(),
+        df_pedidos_eval["Pedido"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
+    ])
+    df_pedidos_eval["Casuistica"] = pd.Series(idx_eval.map(mapa_cas_ap), index=df_pedidos_eval.index).fillna("Pedido Perfecto")
     return df_pedidos_eval
 
 def procesar_pedidos_sla(carpeta=".", df_rect=None, mapa_sup=None, mapa_ped_area=None):
@@ -543,6 +586,7 @@ def procesar_pedidos_sla(carpeta=".", df_rect=None, mapa_sup=None, mapa_ped_area
     df_nuevos_meses = pd.DataFrame()
     meses_actualizados = set()
     conteos_bdmvtal_lista = []
+    df_506_lookup_list = []
 
     if archivos_bdm_unicos:
         lista_bdm_dfs = []
@@ -609,6 +653,15 @@ def procesar_pedidos_sla(carpeta=".", df_rect=None, mapa_sup=None, mapa_ped_area
                 # Deduplicar cabecera de pedido antes de evaluar casuísticas SLA
                 df_t_ped = df_t.drop_duplicates(subset=["Almacen", "Pedido"]).copy()
 
+                # Almacén 506 (Cross-Docking) se usa como tabla auxiliar de búsqueda y para completar los Pedidos Perfectos de las tiendas en su almacén regional (509/514)
+                cols_506_keep = [c for c in ["Almacen", "Tienda", "Pedido", "Lineas_Pedido", "Fecha_DT", "Mes", "Año", "Importe", "Gestion"] if c in df_t_ped.columns]
+                if (df_t_ped["Almacen"] == "506").all():
+                    df_506_lookup_list.append(df_t_ped[cols_506_keep].copy())
+                    continue
+                if (df_t_ped["Almacen"] == "506").any():
+                    df_506_lookup_list.append(df_t_ped[df_t_ped["Almacen"] == "506"][cols_506_keep].copy())
+                    df_t_ped = df_t_ped[df_t_ped["Almacen"] != "506"].copy()
+
                 # Calcular las casuísticas SLA para estos pedidos nuevos usando el detalle de rectificaciones
                 if df_rect is not None and not df_rect.empty:
                     df_r_sub = df_rect[df_rect["Pedido"].isin(set(df_t_ped["Pedido"]))].copy()
@@ -624,13 +677,42 @@ def procesar_pedidos_sla(carpeta=".", df_rect=None, mapa_sup=None, mapa_ped_area
             df_nuevos_meses = pd.concat(lista_bdm_dfs, ignore_index=True).drop_duplicates(subset=["Almacen", "Pedido"])
 
     # Consolidar diccionario maestro de líneas por pedido desde BDMVTAL (Columna F)
+    # Incluye respaldo Cross-Docking (Almacén 506 -> Tienda + Pedido) para pedidos despachados por 506 y rectificados en 509/514
     mapa_lineas_bdmvtal_alm = {}
     mapa_lineas_bdmvtal = {}
+    mapa_506_tp_lineas = {}
+    mapa_506_p_lineas = {}
+    pares_506_reconciliados = set()
+
     if conteos_bdmvtal_lista:
         df_bd_lineas_alm = pd.concat(conteos_bdmvtal_lista, ignore_index=True).groupby(["Almacen", "Pedido"], as_index=False)["Lineas_Pedido"].sum()
         mapa_lineas_bdmvtal_alm = df_bd_lineas_alm.set_index(["Almacen", "Pedido"])["Lineas_Pedido"].to_dict()
         df_bd_lineas = df_bd_lineas_alm.groupby("Pedido", as_index=False)["Lineas_Pedido"].sum()
         mapa_lineas_bdmvtal = df_bd_lineas.set_index("Pedido")["Lineas_Pedido"].to_dict()
+
+        if df_506_lookup_list:
+            df_506_sub = pd.concat(df_506_lookup_list, ignore_index=True)
+            mapa_506_tp_lineas = df_506_sub.drop_duplicates(["Tienda", "Pedido"]).set_index(["Tienda", "Pedido"])["Lineas_Pedido"].to_dict()
+            mapa_506_p_lineas = df_506_sub.drop_duplicates("Pedido").set_index("Pedido")["Lineas_Pedido"].to_dict()
+
+        # Vincular pedidos de rectificaciones que vinieron sin match directo en su almacén pero sí existen en Cross-Docking 506
+        if df_rect is not None and not df_rect.empty and (mapa_506_tp_lineas or mapa_506_p_lineas):
+            df_r_unicos = df_rect.drop_duplicates(subset=["Almacen", "Tienda", "Pedido"])
+            filas_extra_506 = []
+            for _, rr in df_r_unicos.iterrows():
+                a_r = str(rr["Almacen"]).strip()
+                t_r = str(rr["Tienda"]).strip()
+                p_r = str(rr["Pedido"]).strip()
+                if (a_r, p_r) not in mapa_lineas_bdmvtal_alm:
+                    lin_506 = mapa_506_tp_lineas.get((t_r, p_r), mapa_506_p_lineas.get(p_r, 0))
+                    if lin_506 and int(lin_506) > 0:
+                        mapa_lineas_bdmvtal_alm[(a_r, p_r)] = int(lin_506)
+                        filas_extra_506.append({"Almacen": a_r, "Pedido": p_r, "Lineas_Pedido": int(lin_506)})
+                        pares_506_reconciliados.add((t_r, p_r))
+            if filas_extra_506:
+                df_bd_lineas_alm = pd.concat([df_bd_lineas_alm, pd.DataFrame(filas_extra_506)], ignore_index=True).drop_duplicates(["Almacen", "Pedido"])
+                print(f"🔀 Cross-Docking 506: vinculados {len(filas_extra_506):,} pedidos rectificados (509/514) contra BDMVTAL_506.")
+
         # Guardar caché auxiliar ligero para el tablero (incluyendo Almacen_Key y esquema v3_colF)
         try:
             df_bd_save = df_bd_lineas_alm.rename(columns={"Almacen": "Almacen_Key", "Pedido": "Pedido_Key"}).copy()
@@ -664,6 +746,59 @@ def procesar_pedidos_sla(carpeta=".", df_rect=None, mapa_sup=None, mapa_ped_area
     df_p["Tienda"] = df_p["Tienda"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
     df_p["Almacen"] = df_p["Almacen"].fillna("501").astype(str).str.strip()
 
+    # ⚡ GARANTÍA DE INTEGRIDAD: Incorporar todo pedido rectificado de `df_rect` que no esté en `df_p`
+    # (ej. pedidos de Tienda 815 en Sep/Oct/Nov cuyo número corto o almacén no cruzó en BDMVTAL)
+    if df_rect is not None and not df_rect.empty:
+        pares_en_sla = set(zip(df_p["Almacen"], df_p["Pedido"]))
+        df_r_cab = df_rect.drop_duplicates(subset=["Almacen", "Pedido"]).copy()
+        df_r_cab["Almacen"] = df_r_cab["Almacen"].fillna("501").astype(str).str.strip()
+        df_r_cab["Pedido"] = df_r_cab["Pedido"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
+        df_r_cab["Tienda"] = df_r_cab["Tienda"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
+        mask_faltantes = [
+            (a, p) not in pares_en_sla and p not in ["", "0", "nan", "None"]
+            for a, p in zip(df_r_cab["Almacen"], df_r_cab["Pedido"])
+        ]
+        df_r_faltantes = df_r_cab[mask_faltantes].copy()
+        if not df_r_faltantes.empty:
+            df_r_faltantes = evaluar_casuisticas_sla_pedidos(df_r_faltantes, df_rect)
+            if "Fecha de Grabación" in df_r_faltantes.columns:
+                dt_f = normalizar_fechas_serie(df_r_faltantes["Fecha de Grabación"])
+                df_r_faltantes["Mes"] = dt_f.dt.month.fillna(df_r_faltantes.get("Mes", 0)).astype(int)
+                df_r_faltantes["Año"] = dt_f.dt.year.fillna(2026).astype(int)
+            else:
+                df_r_faltantes["Mes"] = pd.to_numeric(df_r_faltantes.get("Mes", 0), errors="coerce").fillna(0).astype(int)
+                df_r_faltantes["Año"] = 2026
+            cols_comunes = [c for c in ["Almacen", "Tienda", "Pedido", "Mes", "Año", "Casuistica", "Area_Salida", "Responsable_Tienda"] if c in df_r_faltantes.columns]
+            df_p = pd.concat([df_p, df_r_faltantes[cols_comunes]], ignore_index=True)
+            print(f"🛡️ Recuperados {len(df_r_faltantes):,} pedidos rectificados (incluyendo Tienda 815 / pedidos cortos) que faltaban en BDMVTAL.")
+
+    # Almacén 506 no se clasifica como almacén propio en SLA, pero sus pedidos perfectos (sin rectificación) se asignan al almacén regional (509/514) de cada tienda
+    if (df_p["Almacen"] == "506").any():
+        cant_506_excl = int((df_p["Almacen"] == "506").sum())
+        df_p = df_p[df_p["Almacen"] != "506"].copy()
+        print(f"🚫 Excluidos {cant_506_excl:,} registros directos del Almacén 506 del cálculo SLA.")
+
+    if df_506_lookup_list:
+        df_506_all_rows = pd.concat(df_506_lookup_list, ignore_index=True).drop_duplicates(subset=["Tienda", "Pedido"])
+        # Almacén regional habitual por Tienda (ej. 509 o 514)
+        mapa_tienda_alm_reg = (
+            df_p[df_p["Almacen"].isin(["501", "503", "504", "509", "514"])]
+            .groupby("Tienda")["Almacen"]
+            .agg(lambda s: s.mode().iloc[0] if not s.empty else "509")
+            .to_dict()
+        )
+        pares_tp_exist = set(zip(df_p["Tienda"], df_p["Pedido"]))
+        df_506_perf = df_506_all_rows[
+            [(t, p) not in pares_tp_exist and p not in ["", "0", "nan", "None"] and t in mapa_tienda_alm_reg
+             for t, p in zip(df_506_all_rows["Tienda"], df_506_all_rows["Pedido"])]
+        ].copy()
+        if not df_506_perf.empty:
+            df_506_perf["Almacen"] = df_506_perf["Tienda"].map(mapa_tienda_alm_reg)
+            df_506_perf["Casuistica"] = "Pedido Perfecto"
+            cols_add_506 = [c for c in df_506_perf.columns if c in df_p.columns or c in ["Almacen", "Tienda", "Pedido", "Lineas_Pedido", "Fecha_DT", "Mes", "Año", "Importe", "Gestion", "Casuistica"]]
+            df_p = pd.concat([df_p, df_506_perf[cols_add_506]], ignore_index=True)
+            print(f"✅ Incorporados {len(df_506_perf):,} pedidos perfectos de Cross-Docking (BDMVTAL_506) al almacén regional (509/514) de cada tienda.")
+
     # ⚡ ASIGNACIÓN DE TOTAL DE LÍNEAS POR PEDIDO (Lineas_Pedido)
     if "Lineas_Pedido" not in df_p.columns:
         df_p["Lineas_Pedido"] = 0
@@ -687,28 +822,33 @@ def procesar_pedidos_sla(carpeta=".", df_rect=None, mapa_sup=None, mapa_ped_area
     elif "Responsable_Tienda" not in df_p.columns:
         df_p["Responsable_Tienda"] = "Sin Asignar"
 
-    # Asignar Área de Salida oficial a Pedidos
-    mapa_p = mapa_ped_area if mapa_ped_area else {}
-    df_p["Area_Salida"] = df_p["Pedido"].map(mapa_p).fillna("")
-    
-    # Respaldo desde rectificaciones
+    # Asignar Área de Salida oficial a Pedidos por (Almacén, Pedido) desde los CSV (sin match -> "Sin Area")
+    if isinstance(mapa_ped_area, tuple):
+        mapa_ap, mapa_p = mapa_ped_area
+    else:
+        mapa_ap, mapa_p = {}, (mapa_ped_area if mapa_ped_area else {})
+    idx_p_ap = pd.MultiIndex.from_frame(df_p[["Almacen", "Pedido"]])
+    s_p_ap = pd.Series(idx_p_ap.map(mapa_ap), index=df_p.index) if mapa_ap else pd.Series(np.nan, index=df_p.index)
+    s_p_only = df_p["Pedido"].map(mapa_p) if mapa_p else pd.Series(np.nan, index=df_p.index)
+    df_p["Area_Salida"] = s_p_ap.fillna(s_p_only).fillna("")
     if df_rect is not None and not df_rect.empty:
-        df_r_areas = df_rect[df_rect["Area_Salida"].isin(AREAS_OFICIALES)][["Pedido", "Area_Salida"]].drop_duplicates("Pedido")
-        m_r_area = df_r_areas.set_index("Pedido")["Area_Salida"].to_dict()
-        mask_sin = ~df_p["Area_Salida"].isin(AREAS_OFICIALES)
-        df_p.loc[mask_sin, "Area_Salida"] = df_p.loc[mask_sin, "Pedido"].map(m_r_area).fillna("")
-
-    # Fallback final a área oficial
+        df_r_ok = df_rect[df_rect["Area_Salida"].isin(AREAS_OFICIALES)].drop_duplicates(subset=["Almacen", "Pedido"])
+        if not df_r_ok.empty:
+            mapa_r_ap = df_r_ok.set_index(["Almacen", "Pedido"])["Area_Salida"].to_dict()
+            s_r_ap = pd.Series(idx_p_ap.map(mapa_r_ap), index=df_p.index).fillna("")
+            mask_s = ~df_p["Area_Salida"].isin(AREAS_OFICIALES)
+            df_p.loc[mask_s, "Area_Salida"] = s_r_ap[mask_s]
     mask_invalida = ~df_p["Area_Salida"].isin(AREAS_OFICIALES)
-    df_p.loc[mask_invalida, "Area_Salida"] = np.where(df_p.loc[mask_invalida, "Almacen"] == "506", "24", "11")
+    df_p.loc[mask_invalida, "Area_Salida"] = "Sin Area"
 
-    # Reclasificación prioritaria a 'Rectificación Almacén' (-10 Pts) para cualquier pedido con Procedencia 'G'
+    # Reclasificación prioritaria a 'Rectificación Almacén' (-10 Pts) por clave exacta (Almacén, Pedido) con Procedencia 'G'
     if df_rect is not None and not df_rect.empty and "Procedencia" in df_rect.columns:
-        pedidos_g_global = set(df_rect[df_rect["Procedencia"].astype(str).str.strip().str.upper() == "G"]["Pedido"].dropna().unique())
-        if pedidos_g_global:
-            mask_g = df_p["Pedido"].isin(pedidos_g_global)
+        df_g_glob = df_rect[df_rect["Procedencia"].astype(str).str.strip().str.upper() == "G"]
+        pares_g_global = set(zip(df_g_glob["Almacen"].astype(str).str.strip(), df_g_glob["Pedido"].astype(str).str.strip()))
+        if pares_g_global:
+            mask_g = [(a, p) in pares_g_global for a, p in zip(df_p["Almacen"], df_p["Pedido"])]
             df_p.loc[mask_g, "Casuistica"] = "Rectificación Almacén"
-            print(f"🏢 Asignados {mask_g.sum():,} pedidos con 'Rectificación Almacén' (Procedencia 'G', 0.0 Pts)")
+            print(f"🏢 Asignados {sum(mask_g):,} pedidos con 'Rectificación Almacén' (Procedencia 'G', 0.0 Pts)")
 
     # Aplicación de Puntos SLA (incluye Sobrante Neto = 9.0 pts)
     df_p["Puntos_Obtenidos"] = df_p["Casuistica"].map(MAPA_PUNTOS_SLA).fillna(10.0)

@@ -129,7 +129,7 @@ def normalizar_fechas_a_mes(serie_fechas):
     return meses
 
 @st.cache_data(show_spinner=False)
-def cargar_datos_sla_3m(version="v3_ultimos_3m"):
+def cargar_datos_sla_3m(version="v12_xdock_506_perfectos_tienda"):
     if os.path.exists("Tablero_SLA_Pedidos.parquet"):
         df_sla = pd.read_parquet("Tablero_SLA_Pedidos.parquet")
         df_rect = pd.read_parquet("Tablero_Rectificaciones_Detalle.parquet") if os.path.exists("Tablero_Rectificaciones_Detalle.parquet") else pd.DataFrame()
@@ -159,12 +159,11 @@ def cargar_datos_sla_3m(version="v3_ultimos_3m"):
             if len(periodos_validos) > 3:
                 ultimos_3_periodos = set(periodos_validos[-3:])
                 df_sla = df_sla[df_sla["_Periodo_Key"].isin(ultimos_3_periodos)].copy()
-                if not df_rect.empty and "Pedido" in df_rect.columns:
-                    pedidos_3m = set(
-                        df_sla["Pedido"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0").dropna().unique()
-                    )
-                    ped_rect_norm = df_rect["Pedido"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
-                    df_rect = df_rect[ped_rect_norm.isin(pedidos_3m)].copy()
+                if not df_rect.empty and "Mes" in df_rect.columns:
+                    meses_3m = {int(p) % 100 for p in ultimos_3_periodos}
+                    mes_rect_num = pd.to_numeric(df_rect["Mes"], errors="coerce").fillna(0).astype(int)
+                    if (mes_rect_num > 0).any():
+                        df_rect = df_rect[mes_rect_num.isin(meses_3m)].copy()
             df_sla.drop(columns=["_Periodo_Key"], inplace=True, errors="ignore")
 
         # ⚡ APLICAR ESCALA OFICIAL DE PUNTAJES SLA (Sobrante Neto = 9.0 pts / descuento -1 pt)
@@ -188,6 +187,7 @@ def cargar_datos_sla_3m(version="v3_ultimos_3m"):
         if "Almacen" not in df_sla.columns:
             col_alm = [c for c in df_sla.columns if any(k in c.lower() for k in ["almacen", "almacén", "cd", "cod_almacen"])]
             df_sla["Almacen"] = df_sla[col_alm[0]].astype(str).str.strip() if col_alm else "501"
+        df_sla = df_sla[df_sla["Almacen"].astype(str).str.strip() != "506"].copy()
             
         if "Tienda" not in df_sla.columns:
             col_t = [c for c in df_sla.columns if any(k in c.lower() for k in ["tienda", "sucursal", "cod_suc_des"])]
@@ -198,7 +198,7 @@ def cargar_datos_sla_3m(version="v3_ultimos_3m"):
             df_sla["Gestion"] = df_sla[col_g[0]].astype(str).str.strip() if col_g else "Sin Clasificar"
         
         df_sla["Gestion"] = df_sla["Gestion"].fillna("Sin Clasificar").astype(str).str.strip()
-        df_sla["Gestion"] = df_sla["Gestion"].replace(["-", "--", "- ", "", "nan", "None"], "Sin Clasificar")
+        df_sla["Gestion"] = df_sla["Gestion"].replace(["-", "--", "- ", "", "nan", "None", "Sin Clasificar"], "Sin Area")
 
         if "Responsable_Tienda" not in df_sla.columns:
             df_sla["Responsable_Tienda"] = "Sin Asignar"
@@ -260,10 +260,10 @@ def cargar_datos_sla_3m(version="v3_ultimos_3m"):
                     pass
 
         if "Area_Salida" not in df_sla.columns:
-            df_sla["Area_Salida"] = "Sin Clasificar"
+            df_sla["Area_Salida"] = "Sin Area"
         else:
-            df_sla["Area_Salida"] = df_sla["Area_Salida"].fillna("Sin Clasificar").astype(str).str.strip()
-            df_sla["Area_Salida"] = df_sla["Area_Salida"].replace(["-", "--", "- ", "", "nan", "None"], "Sin Clasificar")
+            df_sla["Area_Salida"] = df_sla["Area_Salida"].fillna("Sin Area").astype(str).str.strip()
+            df_sla["Area_Salida"] = df_sla["Area_Salida"].replace(["-", "--", "- ", "", "nan", "None", "Sin Clasificar"], "Sin Area")
 
         if "Año" not in df_sla.columns:
             df_sla["Año"] = 2026
@@ -300,10 +300,152 @@ def cargar_datos_sla_3m(version="v3_ultimos_3m"):
                     mapa_area_p = df_sla[["Pedido", "Area_Salida"]].drop_duplicates().set_index("Pedido")["Area_Salida"].to_dict()
                     df_rect["Area_Salida"] = df_rect["Pedido"].map(mapa_area_p).fillna("Sin Clasificar")
                 else:
-                    df_rect["Area_Salida"] = "Sin Clasificar"
+                    df_rect["Area_Salida"] = "Sin Area"
             
-            df_rect["Area_Salida"] = df_rect["Area_Salida"].fillna("Sin Clasificar").astype(str).str.strip()
-            df_rect["Area_Salida"] = df_rect["Area_Salida"].replace(["-", "--", "- ", "", "nan", "None"], "Sin Clasificar")
+            df_rect["Area_Salida"] = df_rect["Area_Salida"].fillna("Sin Area").astype(str).str.strip()
+            df_rect["Area_Salida"] = df_rect["Area_Salida"].replace(["-", "--", "- ", "", "nan", "None", "Sin Clasificar"], "Sin Area")
+
+            # ⚡ CRUCE DIRECTO POR (ALMACÉN, PEDIDO) DESDE CSV DE ÁREA (SIN MATCH -> "Sin Area")
+            import glob as _glob_area
+            _areas_oficiales_app = {"11", "12", "13", "14", "16", "21", "22", "23", "24", "95"}
+            _archivos_area_app = sorted(list(set(
+                _glob_area.glob("*[Aa]rea*[Ss]alida*.csv") +
+                _glob_area.glob(os.path.join("Datos_mensuales", "*[Aa]rea*[Ss]alida*.csv")) +
+                _glob_area.glob("*[Ss]ector*.csv") +
+                _glob_area.glob(os.path.join("Datos_mensuales", "*[Ss]ector*.csv"))
+            )))
+            _mapa_ap_csv = {}
+            _mapa_p_csv = {}
+            for _fa in _archivos_area_app:
+                try:
+                    try:
+                        _df_a_tmp = pd.read_csv(_fa, sep=None, engine="python", encoding="latin1", dtype=str, on_bad_lines="skip")
+                    except Exception:
+                        _df_a_tmp = pd.read_csv(_fa, sep=";", encoding="latin1", dtype=str, on_bad_lines="skip")
+                    _df_a_tmp.columns = _df_a_tmp.columns.str.strip().str.upper()
+                    _c_alm = next((c for c in _df_a_tmp.columns if any(k in c for k in ["ALMAC", "CD", "CENTRO"])), None)
+                    _c_ped = next((c for c in _df_a_tmp.columns if any(k in c for k in ["PEDIDO", "Nº DE PEDIDO", "Nº PEDIDO", "NRO_PEDIDO", "NRO PEDIDO"])), None)
+                    _c_are = next((c for c in _df_a_tmp.columns if any(k in c for k in ["AREA", "ÁREA", "SALIDA", "SECTOR"])), None)
+                    if _c_ped and _c_are:
+                        _df_a_tmp["_P"] = _df_a_tmp[_c_ped].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
+                        _df_a_tmp["_A"] = _df_a_tmp[_c_are].astype(str).str.strip()
+                        _df_a_tmp["_M"] = _df_a_tmp[_c_alm].astype(str).str.strip().str.replace(".0", "", regex=False) if _c_alm else ""
+                        _df_v = _df_a_tmp[(_df_a_tmp["_P"] != "") & (_df_a_tmp["_A"].isin(_areas_oficiales_app))]
+                        if not _df_v.empty:
+                            if _c_alm:
+                                _df_va = _df_v[_df_v["_M"] != ""]
+                                if not _df_va.empty:
+                                    _mapa_ap_csv.update(_df_va.drop_duplicates(["_M", "_P"]).set_index(["_M", "_P"])["_A"].to_dict())
+                            _mapa_p_csv.update(_df_v.drop_duplicates("_P").set_index("_P")["_A"].to_dict())
+                except Exception:
+                    pass
+
+            _alm_r = df_rect["Almacen"].astype(str).str.strip() if "Almacen" in df_rect.columns else pd.Series("501", index=df_rect.index)
+            _ped_r = df_rect["Pedido"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
+            if _mapa_ap_csv or _mapa_p_csv:
+                _idx_r = pd.MultiIndex.from_arrays([_alm_r, _ped_r])
+                _s_ap = pd.Series(_idx_r.map(_mapa_ap_csv), index=df_rect.index) if _mapa_ap_csv else pd.Series(np.nan, index=df_rect.index)
+                _s_p = _ped_r.map(_mapa_p_csv) if _mapa_p_csv else pd.Series(np.nan, index=df_rect.index)
+                _area_csv = _s_ap.fillna(_s_p)
+                df_rect["Area_Salida"] = np.where(_area_csv.isin(_areas_oficiales_app), _area_csv, "")
+            else:
+                df_rect["Area_Salida"] = np.where(df_rect["Area_Salida"].isin(_areas_oficiales_app), df_rect["Area_Salida"], "")
+
+            # Rellenar rectificaciones sin match en CSV usando histórico en ESE MISMO ALMACÉN:
+            # 1° (Almacén, SKU) -> 2° (Almacén, Subfamilia) -> 3° (Almacén, Familia)
+            _mask_sin_a = ~df_rect["Area_Salida"].isin(_areas_oficiales_app)
+            _df_con_a = df_rect[~_mask_sin_a].copy()
+            if _mask_sin_a.any() and not _df_con_a.empty:
+                _df_con_a["_A_K"] = _df_con_a["Almacen"].astype(str).str.strip()
+                if "Artículo" in df_rect.columns:
+                    _df_con_a["_S_K"] = _df_con_a["Artículo"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
+                    _mapa_hist_as = (
+                        _df_con_a.groupby(["_A_K", "_S_K"])["Area_Salida"]
+                        .agg(lambda s: s.mode().iloc[0] if not s.empty else "")
+                        .to_dict()
+                    )
+                    _sku_r = df_rect.loc[_mask_sin_a, "Artículo"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
+                    _idx_sin_r = pd.MultiIndex.from_arrays([_alm_r.loc[_mask_sin_a], _sku_r])
+                    _s_hist_r = pd.Series(_idx_sin_r.map(_mapa_hist_as), index=df_rect.loc[_mask_sin_a].index).fillna("")
+                    df_rect.loc[_mask_sin_a, "Area_Salida"] = np.where(_s_hist_r.isin(_areas_oficiales_app), _s_hist_r, "")
+
+                _mask_sin_a = ~df_rect["Area_Salida"].isin(_areas_oficiales_app)
+                if _mask_sin_a.any() and "Subfamilia" in df_rect.columns:
+                    _df_con_sf = _df_con_a[_df_con_a["Subfamilia"].notna() & (~_df_con_a["Subfamilia"].astype(str).isin(["", "nan", "None"]))]
+                    if not _df_con_sf.empty:
+                        _mapa_hist_sf = (
+                            _df_con_sf.groupby(["_A_K", "Subfamilia"])["Area_Salida"]
+                            .agg(lambda s: s.mode().iloc[0] if not s.empty else "")
+                            .to_dict()
+                        )
+                        _idx_sin_sf = pd.MultiIndex.from_arrays([_alm_r.loc[_mask_sin_a], df_rect.loc[_mask_sin_a, "Subfamilia"].astype(str)])
+                        _s_hist_sf = pd.Series(_idx_sin_sf.map(_mapa_hist_sf), index=df_rect.loc[_mask_sin_a].index).fillna("")
+                        df_rect.loc[_mask_sin_a, "Area_Salida"] = np.where(_s_hist_sf.isin(_areas_oficiales_app), _s_hist_sf, "")
+
+                _mask_sin_a = ~df_rect["Area_Salida"].isin(_areas_oficiales_app)
+                if _mask_sin_a.any() and "Familia" in df_rect.columns:
+                    _df_con_fam = _df_con_a[_df_con_a["Familia"].notna() & (~_df_con_a["Familia"].astype(str).isin(["", "nan", "None"]))]
+                    if not _df_con_fam.empty:
+                        _mapa_hist_fam = (
+                            _df_con_fam.groupby(["_A_K", "Familia"])["Area_Salida"]
+                            .agg(lambda s: s.mode().iloc[0] if not s.empty else "")
+                            .to_dict()
+                        )
+                        _idx_sin_fam = pd.MultiIndex.from_arrays([_alm_r.loc[_mask_sin_a], df_rect.loc[_mask_sin_a, "Familia"].astype(str)])
+                        _s_hist_fam = pd.Series(_idx_sin_fam.map(_mapa_hist_fam), index=df_rect.loc[_mask_sin_a].index).fillna("")
+                        df_rect.loc[_mask_sin_a, "Area_Salida"] = np.where(_s_hist_fam.isin(_areas_oficiales_app), _s_hist_fam, "Sin Area")
+
+            _mask_sin_a = ~df_rect["Area_Salida"].isin(_areas_oficiales_app)
+            df_rect.loc[_mask_sin_a, "Area_Salida"] = "Sin Area"
+
+            # Excepción puntual solicitada solo para casos remanentes en "Sin Area":
+            _mask_rem_app = df_rect["Area_Salida"] == "Sin Area"
+            if _mask_rem_app.any():
+                _mapa_limp_app = {}
+                _df_ok_l_app = df_rect[df_rect["Area_Salida"].isin(_areas_oficiales_app)]
+                if not _df_ok_l_app.empty and "Descripción" in _df_ok_l_app.columns:
+                    _mk_l_app = _df_ok_l_app["Descripción"].astype(str).str.upper().str.contains("LIMPIEZA|LAVANDINA|DETERGENTE|JABON|PIEDRITAS|PEDRITAS", na=False)
+                    if _mk_l_app.any():
+                        _mapa_limp_app = (
+                            _df_ok_l_app[_mk_l_app].groupby("Almacen")["Area_Salida"]
+                            .agg(lambda s: s.mode().iloc[0] if not s.empty else "11")
+                            .to_dict()
+                        )
+                _desc_rem_app = df_rect.loc[_mask_rem_app, "Descripción"].fillna("").astype(str).str.upper() if "Descripción" in df_rect.columns else pd.Series("", index=df_rect.loc[_mask_rem_app].index)
+                _sku_rem_app = df_rect.loc[_mask_rem_app, "Artículo"].fillna("").astype(str).str.strip() if "Artículo" in df_rect.columns else pd.Series("", index=df_rect.loc[_mask_rem_app].index)
+                _alm_rem_app = df_rect.loc[_mask_rem_app, "Almacen"].fillna("501").astype(str).str.strip()
+                _nuevas_app = []
+                for _d_t, _s_t, _a_t in zip(_desc_rem_app, _sku_rem_app, _alm_rem_app):
+                    if "CONGELAD" in _d_t or "MERLUZA" in _d_t:
+                        _nuevas_app.append("22")
+                    elif "LEBERWURST" in _d_t:
+                        _nuevas_app.append("21")
+                    elif "VINO" in _d_t or "TINTO DE VERANO" in _d_t or "VEGETALES DESHIDRATADOS" in _d_t or _s_t == "285777":
+                        _nuevas_app.append("11")
+                    elif "PEDRITAS SANITARIAS" in _d_t or "PIEDRITAS SANITARIAS" in _d_t or _s_t in {"308410", "300436"}:
+                        _nuevas_app.append(_mapa_limp_app.get(_a_t, "11"))
+                    else:
+                        _nuevas_app.append("Sin Area")
+                df_rect.loc[_mask_rem_app, "Area_Salida"] = _nuevas_app
+
+            if not df_sla.empty and "Pedido" in df_sla.columns:
+                _alm_s = df_sla["Almacen"].astype(str).str.strip() if "Almacen" in df_sla.columns else pd.Series("501", index=df_sla.index)
+                _ped_s = df_sla["Pedido"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
+                _idx_s = pd.MultiIndex.from_arrays([_alm_s, _ped_s])
+                if _mapa_ap_csv or _mapa_p_csv:
+                    _s_ap_s = pd.Series(_idx_s.map(_mapa_ap_csv), index=df_sla.index) if _mapa_ap_csv else pd.Series(np.nan, index=df_sla.index)
+                    _s_p_s = _ped_s.map(_mapa_p_csv) if _mapa_p_csv else pd.Series(np.nan, index=df_sla.index)
+                    _area_csv_s = _s_ap_s.fillna(_s_p_s)
+                    df_sla["Area_Salida"] = np.where(_area_csv_s.isin(_areas_oficiales_app), _area_csv_s, "")
+                else:
+                    df_sla["Area_Salida"] = np.where(df_sla.get("Area_Salida", pd.Series("", index=df_sla.index)).isin(_areas_oficiales_app), df_sla["Area_Salida"], "")
+                _df_r_ok_app = df_rect[df_rect["Area_Salida"].isin(_areas_oficiales_app)].drop_duplicates(subset=["Almacen", "Pedido"])
+                if not _df_r_ok_app.empty:
+                    _m_r_ap_app = _df_r_ok_app.set_index(["Almacen", "Pedido"])["Area_Salida"].to_dict()
+                    _s_r_ap_app = pd.Series(_idx_s.map(_m_r_ap_app), index=df_sla.index).fillna("")
+                    _mk_s = ~df_sla["Area_Salida"].isin(_areas_oficiales_app)
+                    df_sla.loc[_mk_s, "Area_Salida"] = _s_r_ap_app[_mk_s]
+                df_sla["Area_Salida"] = np.where(df_sla["Area_Salida"].isin(_areas_oficiales_app), df_sla["Area_Salida"], "Sin Area")
 
             if "Tienda" in df_rect.columns and "Tienda" in df_sla.columns:
                 if "Responsable_Tienda" in df_sla.columns:
@@ -318,7 +460,7 @@ def cargar_datos_sla_3m(version="v3_ultimos_3m"):
                 if "Gestion" in df_sla.columns:
                     mapa_gest = df_sla[["Tienda", "Gestion"]].drop_duplicates().set_index("Tienda")["Gestion"].to_dict()
                     df_rect["Gestion"] = df_rect["Tienda"].map(mapa_gest).fillna("Sin Clasificar")
-                    df_rect["Gestion"] = df_rect["Gestion"].replace(["-", "--", "- ", "", "nan", "None"], "Sin Clasificar")
+                    df_rect["Gestion"] = df_rect["Gestion"].replace(["-", "--", "- ", "", "nan", "None", "Sin Clasificar"], "Sin Area")
 
             # ⚡ ENRIQUECIMIENTO EN CALIENTE SI UxB O BxM NO VIENEN EN EL PARQUET
             necesita_maestro = ("UxB" not in df_rect.columns) or ("BULFM" not in df_rect.columns) or (pd.to_numeric(df_rect.get("UxB", 1.0), errors="coerce").fillna(1.0) > 1.0).sum() == 0
@@ -381,11 +523,82 @@ def cargar_datos_sla_3m(version="v3_ultimos_3m"):
             df_rect["UxM"] = df_rect["UxB"] * df_rect["BULFM"]
             df_rect["Es_Unidad_Suelta"] = (df_rect["UxB"] > 1.0) & (df_rect["Unidades_Num"] > 0.0) & (df_rect["Unidades_Num"] < df_rect["UxB"])
 
+        # ⚡ RECONCILIACIÓN DE INTEGRIDAD EN TIEMPO REAL (`df_rect` <-> `df_sla`)
+        # Garantiza que todo (Almacén, Pedido) presente en el detalle de rectificaciones exista en `df_sla`
+        # (recupera pedidos cortos como 3579, 4133, 7046, 18651 o tiendas como la 815 en Sep/Oct/Nov)
+        if not df_rect.empty and not df_sla.empty:
+            df_sla["Almacen"] = df_sla["Almacen"].fillna("501").astype(str).str.strip()
+            df_sla["Pedido"] = df_sla["Pedido"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
+            df_sla["Tienda"] = df_sla["Tienda"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
+
+            df_rect["Almacen"] = df_rect["Almacen"].fillna("501").astype(str).str.strip()
+            df_rect["Pedido"] = df_rect["Pedido"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
+            df_rect["Tienda"] = df_rect["Tienda"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
+
+            pares_sla_exist = set(zip(df_sla["Almacen"], df_sla["Pedido"]))
+            df_r_cab_app = df_rect.drop_duplicates(subset=["Almacen", "Pedido"]).copy()
+            mask_r_missing = [
+                (a, p) not in pares_sla_exist and p not in ["", "0", "nan", "None"]
+                for a, p in zip(df_r_cab_app["Almacen"], df_r_cab_app["Pedido"])
+            ]
+            df_r_add = df_r_cab_app[mask_r_missing].copy()
+            if not df_r_add.empty:
+                # Calcular casuística SLA por (Almacén, Pedido)
+                col_p_app = "Procedencia" if "Procedencia" in df_rect.columns else None
+                col_m_app = "Motivo_Clean" if "Motivo_Clean" in df_rect.columns else ("Motivo" if "Motivo" in df_rect.columns else None)
+                df_r_eval_app = df_rect.copy()
+                df_r_eval_app["_Mot"] = df_r_eval_app[col_m_app].astype(str).str.strip().str.upper() if col_m_app else "F"
+                pares_g_app = set()
+                if col_p_app:
+                    df_g_app = df_r_eval_app[df_r_eval_app[col_p_app].astype(str).str.strip().str.upper() == "G"]
+                    pares_g_app = set(zip(df_g_app["Almacen"], df_g_app["Pedido"]))
+                df_t_app = df_r_eval_app[df_r_eval_app[col_p_app].astype(str).str.strip().str.upper() == "T"] if col_p_app else df_r_eval_app
+                mapa_cas_add = {}
+                for (a_k, p_k), grp_k in df_t_app.groupby(["Almacen", "Pedido"]):
+                    cf = (grp_k["_Mot"] == "F").sum()
+                    cs = (grp_k["_Mot"] == "S").sum()
+                    ct = cf + cs
+                    if ct == 0:
+                        mapa_cas_add[(a_k, p_k)] = "Pedido Perfecto"
+                    elif cf == 0 and cs > 0:
+                        mapa_cas_add[(a_k, p_k)] = "Sobrante Neto"
+                    elif cs == 0 and cf > 0:
+                        mapa_cas_add[(a_k, p_k)] = "Faltante Neto" if cf <= 10 else "Formato no entregado"
+                    else:
+                        if ct >= 12 and cf != cs:
+                            mapa_cas_add[(a_k, p_k)] = "Etiquetas Cambiadas"
+                        elif cf == cs and ct < 12:
+                            sf = set(grp_k[grp_k["_Mot"] == "F"]["Subfamilia"].dropna().unique()) if "Subfamilia" in grp_k.columns else set()
+                            ss = set(grp_k[grp_k["_Mot"] == "S"]["Subfamilia"].dropna().unique()) if "Subfamilia" in grp_k.columns else set()
+                            mapa_cas_add[(a_k, p_k)] = "Sustitución Misma Subfamilia" if (sf and sf == ss) else "Sustitución Distinta Subfamilia"
+                        else:
+                            mapa_cas_add[(a_k, p_k)] = "Falta/Sobra"
+                for pg in pares_g_app:
+                    mapa_cas_add[pg] = "Rectificación Almacén"
+
+                idx_add = pd.MultiIndex.from_arrays([df_r_add["Almacen"], df_r_add["Pedido"]])
+                df_r_add["Casuistica"] = pd.Series(idx_add.map(mapa_cas_add), index=df_r_add.index).fillna("Faltante Neto")
+                df_r_add["Puntos_Obtenidos"] = df_r_add["Casuistica"].map(mapa_puntos_oficial).fillna(4.0)
+
+                if "Fecha de Grabación" in df_r_add.columns:
+                    df_r_add["Mes"] = normalizar_fechas_a_mes(df_r_add["Fecha de Grabación"])
+                elif "Mes" not in df_r_add.columns:
+                    df_r_add["Mes"] = 0
+                df_r_add["Año"] = 2026
+
+                mapa_gest_t = df_sla[["Tienda", "Gestion"]].drop_duplicates("Tienda").set_index("Tienda")["Gestion"].to_dict() if "Gestion" in df_sla.columns else {}
+                mapa_resp_t = df_sla[["Tienda", "Responsable_Tienda"]].drop_duplicates("Tienda").set_index("Tienda")["Responsable_Tienda"].to_dict() if "Responsable_Tienda" in df_sla.columns else {}
+                df_r_add["Gestion"] = df_r_add["Tienda"].map(mapa_gest_t).fillna("Sin Area")
+                df_r_add["Responsable_Tienda"] = df_r_add["Tienda"].map(mapa_resp_t).fillna("Sin Asignar")
+
+                cols_add = [c for c in ["Almacen", "Tienda", "Pedido", "Mes", "Año", "Casuistica", "Puntos_Obtenidos", "Area_Salida", "Gestion", "Responsable_Tienda"] if c in df_r_add.columns]
+                df_sla = pd.concat([df_sla, df_r_add[cols_add]], ignore_index=True)
+
         return df_sla, df_rect
     return pd.DataFrame(), pd.DataFrame()
 
 @st.cache_data(show_spinner=False)
-def cargar_lineas_bdmvtal(version="v3_bdmvtal_colF_exact"):
+def cargar_lineas_bdmvtal(version="v4_bdmvtal_506_xdock"):
     """
     Lee archivos BDMVTAL (o parquet consolidado con esquema v3_colF) tomando explícitamente la Columna F
     (cantidad de líneas ya agrupadas por pedido) y devuelve (mapa_alm_pedido, mapa_pedido).
@@ -470,6 +683,17 @@ def cargar_lineas_bdmvtal(version="v3_bdmvtal_colF_exact"):
 
         if conteos_lista:
             df_bd_alm = pd.concat(conteos_lista, ignore_index=True).groupby(["Almacen_Key", "Pedido_Key"], as_index=False)["Lineas_Pedido"].sum()
+            # Replicar líneas de Cross-Docking (506) hacia 509 y 514 cuando no existan en esos almacenes
+            df_506_bd = df_bd_alm[df_bd_alm["Almacen_Key"] == "506"]
+            if not df_506_bd.empty:
+                pares_bd_exist = set(zip(df_bd_alm["Almacen_Key"], df_bd_alm["Pedido_Key"]))
+                extras_506 = []
+                for alm_dest in ["509", "514"]:
+                    for _, r5 in df_506_bd.iterrows():
+                        if (alm_dest, r5["Pedido_Key"]) not in pares_bd_exist:
+                            extras_506.append({"Almacen_Key": alm_dest, "Pedido_Key": r5["Pedido_Key"], "Lineas_Pedido": int(r5["Lineas_Pedido"])})
+                if extras_506:
+                    df_bd_alm = pd.concat([df_bd_alm, pd.DataFrame(extras_506)], ignore_index=True).drop_duplicates(["Almacen_Key", "Pedido_Key"])
             df_bd_alm["Esquema_BD"] = "v3_colF"
             try:
                 df_bd_alm.to_parquet(parquet_bd, index=False)
@@ -744,7 +968,7 @@ try:
     # ==========================================================================
     # ⚡ CRUCE DE TOTAL DE LÍNEAS POR PEDIDO DESDE ARCHIVOS BDMVTAL (COLUMNA F)
     # ==========================================================================
-    mapa_lineas_ap, mapa_lineas_bdmvtal = cargar_lineas_bdmvtal("v3_bdmvtal_colF_exact")
+    mapa_lineas_ap, mapa_lineas_bdmvtal = cargar_lineas_bdmvtal("v4_bdmvtal_506_xdock")
     if not df_sla.empty and "Pedido" in df_sla.columns:
         ped_sla_key = (
             df_sla["Pedido"]
@@ -770,7 +994,7 @@ try:
             keys_a_limpiar = [
                 "sb_alm", "sb_gest", "sb_resp", "sb_tienda", "sb_area", "sb_cas",
                 "sb_est", "sb_fam", "sb_subfam", "sb_anio", "sb_mes",
-                "h6_flt_alm", "h6_flt_causa_anul", "h6_flt_causa_aprob", "h6_flt_tienda", "h6_flt_motivo", "txt_ped_portal", "sb_outliers"
+                "h6_flt_alm", "h6_flt_causa_anul", "h6_flt_causa_aprob", "h6_flt_tienda", "h6_flt_motivo", "txt_ped_portal", "sb_outliers", "h1_excl_sin_bdmvtal"
             ]
             for k in keys_a_limpiar:
                 if k in st.session_state:
@@ -793,6 +1017,8 @@ try:
                 df_sla = df_sla[df_sla["Almacen"].astype(str).isin(almacen_sel)]
                 if not df_rect.empty and "Almacen" in df_rect.columns:
                     df_rect = df_rect[df_rect["Almacen"].astype(str).isin(almacen_sel)]
+                if not df_anul.empty and "Almacen" in df_anul.columns:
+                    df_anul = df_anul[df_anul["Almacen"].astype(str).str.strip().isin(almacen_sel)]
 
         # 2. FILTRO DE GESTIÓN / ZONA
         if "Gestion" in df_sla.columns and df_sla["Gestion"].notna().any():
@@ -809,6 +1035,10 @@ try:
                 df_sla = df_sla[df_sla["Gestion"].astype(str).isin(gestion_sel)]
                 if not df_rect.empty and "Gestion" in df_rect.columns:
                     df_rect = df_rect[df_rect["Gestion"].astype(str).isin(gestion_sel)]
+                if not df_anul.empty and "Tienda" in df_anul.columns:
+                    _t_gest_ok = set(df_sla["Tienda"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0"))
+                    _t_anul_norm = df_anul["Tienda"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
+                    df_anul = df_anul[_t_anul_norm.isin(_t_gest_ok)]
 
         # 3. FILTRO DE FRANQUICIADO / SUPERVISOR
         if "Responsable_Tienda" in df_sla.columns and df_sla["Responsable_Tienda"].notna().any():
@@ -825,6 +1055,10 @@ try:
                 df_sla = df_sla[df_sla["Responsable_Tienda"].astype(str).isin(resp_sel)]
                 if not df_rect.empty and "Responsable_Tienda" in df_rect.columns:
                     df_rect = df_rect[df_rect["Responsable_Tienda"].astype(str).isin(resp_sel)]
+                if not df_anul.empty and "Tienda" in df_anul.columns:
+                    _t_resp_ok = set(df_sla["Tienda"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0"))
+                    _t_anul_norm = df_anul["Tienda"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
+                    df_anul = df_anul[_t_anul_norm.isin(_t_resp_ok)]
 
         # 4. FILTRO DE TIENDA
         if "Tienda" in df_sla.columns:
@@ -841,6 +1075,10 @@ try:
                 df_sla = df_sla[df_sla["Tienda"].astype(str).isin(tienda_sel)]
                 if not df_rect.empty and "Tienda" in df_rect.columns:
                     df_rect = df_rect[df_rect["Tienda"].astype(str).isin(tienda_sel)]
+                if not df_anul.empty and "Tienda" in df_anul.columns:
+                    _t_sel_norm = {str(x).strip().replace(".0", "").lstrip("0") or "0" for x in tienda_sel}
+                    _t_anul_norm = df_anul["Tienda"].astype(str).str.strip().str.replace(".0", "", regex=False).str.lstrip("0").replace("", "0")
+                    df_anul = df_anul[_t_anul_norm.isin(_t_sel_norm)]
 
         # 5. FILTRO DE ÁREA DE SALIDA
         areas_sla = set(df_sla["Area_Salida"].dropna().astype(str).unique()) if "Area_Salida" in df_sla.columns else set()
@@ -862,6 +1100,9 @@ try:
                     df_sla = df_sla[df_sla["Area_Salida"].astype(str).isin(area_sel)]
                 if not df_rect.empty and "Area_Salida" in df_rect.columns:
                     df_rect = df_rect[df_rect["Area_Salida"].astype(str).isin(area_sel)]
+                if not df_anul.empty and "Area_Salida" in df_anul.columns:
+                    _a_anul_norm = df_anul["Area_Salida"].fillna("Sin Area").astype(str).str.strip().replace(["", "nan", "None", "-", "Sin Clasificar"], "Sin Area")
+                    df_anul = df_anul[_a_anul_norm.isin(area_sel)]
 
         # 6. FILTRO DE CASUÍSTICA
         if "Casuistica" in df_sla.columns:
@@ -1017,16 +1258,36 @@ try:
         with tab1:
             st.subheader("📊 Ranking SLA por Almacén y Tienda")
 
-            tot_pedidos_global = len(df_sla)
-            tot_pedidos_rectif_global = (df_sla["Casuistica"] != "Pedido Perfecto").sum()
-            tot_pts_obtenidos_global = df_sla["Puntos_Obtenidos"].sum()
+            df_sla_rank = df_sla.copy()
+            df_rect_rank = df_rect.copy() if not df_rect.empty else pd.DataFrame()
+            if "Lineas_Pedido" in df_sla_rank.columns and (df_sla_rank["Lineas_Pedido"] == 0).any():
+                cant_sin_bd = int((df_sla_rank["Lineas_Pedido"] == 0).sum())
+                excluir_sin_bd_rank = st.checkbox(
+                    f"Excluir del Ranking SLA los pedidos sin respaldo en BDMVTAL ({cant_sin_bd:,} pedidos)",
+                    value=True,
+                    key="h1_excl_sin_bdmvtal",
+                    help="Evita que tiendas o supervisores cuyos despachos originales no vinieron exportados en BDMVTAL aparezcan con 100% de pedidos rectificados. Las Hojas 2 a 7 siguen mostrando el 100% de las rectificaciones."
+                )
+                if excluir_sin_bd_rank:
+                    df_sla_rank = df_sla_rank[df_sla_rank["Lineas_Pedido"] > 0].copy()
+                    if not df_rect_rank.empty:
+                        if "Almacen" in df_rect_rank.columns and "Almacen" in df_sla_rank.columns:
+                            claves_validas_h1 = set(zip(df_sla_rank["Almacen"].astype(str), df_sla_rank["Pedido"].astype(str)))
+                            mask_r_h1 = [(str(a), str(p)) in claves_validas_h1 for a, p in zip(df_rect_rank["Almacen"], df_rect_rank["Pedido"])]
+                            df_rect_rank = df_rect_rank[mask_r_h1].copy()
+                        else:
+                            df_rect_rank = df_rect_rank[df_rect_rank["Pedido"].isin(set(df_sla_rank["Pedido"].dropna().unique()))].copy()
+
+            tot_pedidos_global = len(df_sla_rank)
+            tot_pedidos_rectif_global = (df_sla_rank["Casuistica"] != "Pedido Perfecto").sum()
+            tot_pts_obtenidos_global = df_sla_rank["Puntos_Obtenidos"].sum()
             tot_pts_posibles_global = tot_pedidos_global * 10.0
             sla_global = (tot_pts_obtenidos_global / tot_pts_posibles_global * 10.0) if tot_pts_posibles_global > 0 else 0.0
 
             pct_pedidos_rectif = (tot_pedidos_rectif_global / tot_pedidos_global * 100.0) if tot_pedidos_global > 0 else 0.0
 
-            tot_lineas_ped_global = int(df_sla["Lineas_Pedido"].sum()) if "Lineas_Pedido" in df_sla.columns else 0
-            tot_lineas_rect_global = len(df_rect) if not df_rect.empty else 0
+            tot_lineas_ped_global = int(df_sla_rank["Lineas_Pedido"].sum()) if "Lineas_Pedido" in df_sla_rank.columns else 0
+            tot_lineas_rect_global = len(df_rect_rank) if not df_rect_rank.empty else 0
             pct_lineas_rect_global = (tot_lineas_rect_global / tot_lineas_ped_global * 100.0) if tot_lineas_ped_global > 0 else 0.0
 
             k1, k2, k3, k4 = st.columns(4)
@@ -1053,7 +1314,7 @@ try:
             
             mapa_meses = {1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"}
             
-            df_sla_mes = df_sla.copy()
+            df_sla_mes = df_sla_rank.copy()
             df_sla_mes["Mes_Num"] = pd.to_numeric(df_sla_mes["Mes"], errors="coerce").fillna(0).astype(int)
             df_sla_mes["Nombre_Mes"] = df_sla_mes["Mes_Num"].map(mapa_meses).fillna("Sin Mes")
 
@@ -1075,13 +1336,17 @@ try:
                 "Almacén 504": "#D06A4C", "Almacén 509": "#E09F53", "Almacén 514": "#2B5C8F"
             }
 
+            min_sla_alm = float(df_alm_mes["Puntaje SLA"].min()) if not df_alm_mes.empty else 7.0
+            y_min_alm = 0.0 if min_sla_alm < 7.0 else 7.0
+            y_title_alm = f"Puntaje SLA (Escala {int(y_min_alm)} a 10)"
+
             fig_mes_alm = px.bar(
                 df_alm_mes, x="Nombre_Mes", y="Puntaje SLA", color="Etiqueta_Almacen",
                 barmode="group", text="Puntaje SLA", color_discrete_map=mapa_colores_alm
             )
             fig_mes_alm.update_traces(texttemplate='<b>%{text:.2f} ⭐</b>', textposition='outside', cliponaxis=False)
             fig_mes_alm.update_layout(
-                yaxis=dict(range=[7.0, 10.25], title="Puntaje SLA (Escala 7 a 10)"), 
+                yaxis=dict(range=[y_min_alm, 10.45], title=y_title_alm), 
                 xaxis=dict(title="Mes", categoryorder="array", categoryarray=orden_nombres_meses), 
                 height=390, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
             )
@@ -1098,8 +1363,8 @@ try:
 
             df_cas_mes = df_cas_mes.sort_values(by=["Mes_Num"]).reset_index(drop=True)
 
-            if not df_rect.empty:
-                df_rect_m = df_rect.copy()
+            if not df_rect_rank.empty:
+                df_rect_m = df_rect_rank.copy()
                 if "Fecha de Grabación" in df_rect_m.columns:
                     fec_rect_str = df_rect_m["Fecha de Grabación"].astype(str).str.strip()
                     fec_rect_dt = pd.to_datetime(fec_rect_str, format="%Y%m%d", errors="coerce")
@@ -1249,7 +1514,7 @@ try:
 
             st.markdown("---")
             st.markdown("### 📈 Distribución de rectificaciones por casuística")
-            df_sla_tab1_cas = df_sla[df_sla["Casuistica"].astype(str).str.strip() != "Pedido Perfecto"].copy()
+            df_sla_tab1_cas = df_sla_rank[df_sla_rank["Casuistica"].astype(str).str.strip() != "Pedido Perfecto"].copy()
             df_sla_tab1_cas["Casuistica"] = df_sla_tab1_cas["Casuistica"].astype(str).str.strip()
             tot_p_rect = len(df_sla_tab1_cas)
 
@@ -1258,9 +1523,9 @@ try:
             )
             cas_sum["% Participación Pedidos"] = (cas_sum["Pedidos_Totales"] / tot_p_rect) * 100.0 if tot_p_rect > 0 else 0.0
 
-            if not df_rect.empty and "Pedido" in df_rect.columns:
+            if not df_rect_rank.empty and "Pedido" in df_rect_rank.columns:
                 pedidos_por_cas = df_sla_tab1_cas.drop_duplicates("Pedido").set_index("Pedido")["Casuistica"].to_dict()
-                df_rect_cas_temp = df_rect.copy()
+                df_rect_cas_temp = df_rect_rank.copy()
                 df_rect_cas_temp["Casuistica_Mapped"] = df_rect_cas_temp["Pedido"].map(pedidos_por_cas).fillna("Sin Clasificar")
                 
                 # Filtrar líneas válidas por procedencia: 'G' para Rectificación Almacén, 'T' para casuísticas de tienda
@@ -1323,8 +1588,8 @@ try:
             st.markdown("### 👤 Ranking y Puntaje SLA por Franquiciado / Supervisor")
             st.caption("Puntaje SLA ponderado (escala 0-10 ⭐), pedidos recibidos, pedidos rectificados y tasa de aceptación por franquiciado / supervisor.")
 
-            if "Responsable_Tienda" in df_sla.columns and df_sla["Responsable_Tienda"].notna().any():
-                df_sla_resp = df_sla[~df_sla["Responsable_Tienda"].isin(["Sin Asignar", "nan", ""])].copy()
+            if "Responsable_Tienda" in df_sla_rank.columns and df_sla_rank["Responsable_Tienda"].notna().any():
+                df_sla_resp = df_sla_rank[~df_sla_rank["Responsable_Tienda"].isin(["Sin Asignar", "nan", ""])].copy()
                 if not df_sla_resp.empty:
                     df_resp_grp = df_sla_resp.groupby("Responsable_Tienda", as_index=False).agg(
                         Tiendas_Asignadas=("Tienda", "nunique"),
@@ -1337,9 +1602,9 @@ try:
                     df_resp_grp["Puntaje SLA"] = (df_resp_grp["Puntos_Obtenidos"] / df_resp_grp["Puntos_Posibles"]) * 10.0
                     df_resp_grp["% Pedidos con Rectificación"] = (df_resp_grp["Pedidos_Rectificados"] / df_resp_grp["Pedidos_Totales"]) * 100.0
 
-                    if not df_rect.empty and "Responsable_Tienda" in df_rect.columns:
-                        col_est_r = "Estado_Clean" if "Estado_Clean" in df_rect.columns else ("Estado" if "Estado" in df_rect.columns else "Pedido")
-                        grp_rect_resp = df_rect.groupby("Responsable_Tienda", as_index=False).agg(
+                    if not df_rect_rank.empty and "Responsable_Tienda" in df_rect_rank.columns:
+                        col_est_r = "Estado_Clean" if "Estado_Clean" in df_rect_rank.columns else ("Estado" if "Estado" in df_rect_rank.columns else "Pedido")
+                        grp_rect_resp = df_rect_rank.groupby("Responsable_Tienda", as_index=False).agg(
                             Lineas_Grabadas=("Pedido", "count"),
                             Lineas_Aprobadas=(col_est_r, lambda x: (x.astype(str).str.strip().str.upper() == "M").sum() if col_est_r != "Pedido" else len(x))
                         )
@@ -1355,9 +1620,19 @@ try:
                         df_resp_grp["Líneas Confirmadas"] = 0
                         df_resp_grp["% Aceptación"] = 100.0
 
-                    if not df_rect.empty and "Lineas_Pedido" in df_sla_resp.columns and "Responsable_Tienda" in df_rect.columns:
-                        peds_con_bd_r = set(df_sla_resp[df_sla_resp["Lineas_Pedido"] > 0]["Pedido"].dropna().unique())
-                        grp_rect_bd_r = df_rect[df_rect["Pedido"].isin(peds_con_bd_r)].groupby("Responsable_Tienda", as_index=False).size().rename(columns={"size": "Lineas_Grab_BD_R"})
+                    if not df_rect_rank.empty and "Lineas_Pedido" in df_sla_resp.columns and "Responsable_Tienda" in df_rect_rank.columns:
+                        df_sla_resp_bd = df_sla_resp[df_sla_resp["Lineas_Pedido"] > 0]
+                        if "Almacen" in df_rect_rank.columns and "Almacen" in df_sla_resp_bd.columns:
+                            claves_bd_r = set(zip(df_sla_resp_bd["Almacen"].astype(str), df_sla_resp_bd["Pedido"].astype(str)))
+                            mask_rect_bd_r = [
+                                (str(a), str(p)) in claves_bd_r
+                                for a, p in zip(df_rect_rank["Almacen"], df_rect_rank["Pedido"])
+                            ]
+                            df_rect_bd_r = df_rect_rank[mask_rect_bd_r]
+                        else:
+                            peds_con_bd_r = set(df_sla_resp_bd["Pedido"].dropna().unique())
+                            df_rect_bd_r = df_rect_rank[df_rect_rank["Pedido"].isin(peds_con_bd_r)]
+                        grp_rect_bd_r = df_rect_bd_r.groupby("Responsable_Tienda", as_index=False).size().rename(columns={"size": "Lineas_Grab_BD_R"})
                         df_resp_grp = df_resp_grp.merge(grp_rect_bd_r, on="Responsable_Tienda", how="left")
                         df_resp_grp["Lineas_Grab_BD_R"] = df_resp_grp["Lineas_Grab_BD_R"].fillna(0).astype(int)
                     else:
@@ -1366,7 +1641,7 @@ try:
                     df_resp_grp["% Líneas Rectificadas"] = np.where(
                         df_resp_grp["Lineas_Pedidos"] > 0,
                         (df_resp_grp["Lineas_Grab_BD_R"] / df_resp_grp["Lineas_Pedidos"]) * 100.0,
-                        0.0
+                        np.nan
                     )
 
                     df_resp_grp = df_resp_grp.sort_values(by=["Puntaje SLA", "Pedidos_Totales"], ascending=[True, True]).reset_index(drop=True)
@@ -1405,8 +1680,8 @@ try:
             st.markdown("### 🏪 Ranking y Puntaje SLA por Tienda y Almacén")
             st.caption("Puntaje SLA ponderado (escala 0-10 ⭐), pedidos totales recibidos, pedidos rectificados, líneas confirmadas y nivel de aceptación detallado por cada tienda y almacén abastecedor.")
 
-            if "Tienda" in df_sla.columns and not df_sla.empty:
-                df_sla_t_val = df_sla[~df_sla["Tienda"].isin(["Sin Tienda", "nan", ""])].copy()
+            if "Tienda" in df_sla_rank.columns and not df_sla_rank.empty:
+                df_sla_t_val = df_sla_rank[~df_sla_rank["Tienda"].isin(["Sin Tienda", "nan", ""])].copy()
                 if not df_sla_t_val.empty:
                     busq_tienda_h1 = st.text_input("🔍 Buscar Tienda, Almacén o Supervisor en el Ranking:", "", key="txt_busq_t_h1")
                     if busq_tienda_h1:
@@ -1435,10 +1710,10 @@ try:
                     df_t_grp["Puntaje SLA"] = (df_t_grp["Puntos_Obtenidos"] / df_t_grp["Puntos_Posibles"]) * 10.0
                     df_t_grp["% Pedidos con Rectificación"] = (df_t_grp["Pedidos_Rectificados"] / df_t_grp["Pedidos_Totales"]) * 100.0
 
-                    if not df_rect.empty and "Tienda" in df_rect.columns:
-                        col_est_t = "Estado_Clean" if "Estado_Clean" in df_rect.columns else ("Estado" if "Estado" in df_rect.columns else "Pedido")
-                        cols_rect_grp = ["Tienda", "Almacen"] if ("Almacen" in df_rect.columns and "Almacen" in cols_group) else ["Tienda"]
-                        grp_rect_t = df_rect.groupby(cols_rect_grp, as_index=False).agg(
+                    if not df_rect_rank.empty and "Tienda" in df_rect_rank.columns:
+                        col_est_t = "Estado_Clean" if "Estado_Clean" in df_rect_rank.columns else ("Estado" if "Estado" in df_rect_rank.columns else "Pedido")
+                        cols_rect_grp = ["Tienda", "Almacen"] if ("Almacen" in df_rect_rank.columns and "Almacen" in cols_group) else ["Tienda"]
+                        grp_rect_t = df_rect_rank.groupby(cols_rect_grp, as_index=False).agg(
                             Lineas_Grabadas=("Pedido", "count"),
                             Lineas_Confirmadas=(col_est_t, lambda x: (x.astype(str).str.strip().str.upper() == "M").sum() if col_est_t != "Pedido" else len(x))
                         )
@@ -1454,18 +1729,18 @@ try:
                         df_t_grp["% Aceptación"] = 100.0
 
                     # Calcular % Líneas Rectificadas comparando exactamente (Almacén, Pedido) con datos de BDMVTAL
-                    if not df_rect.empty and "Lineas_Pedido" in df_sla_t_val.columns:
+                    if not df_rect_rank.empty and "Lineas_Pedido" in df_sla_t_val.columns:
                         df_sla_con_bd = df_sla_t_val[df_sla_t_val["Lineas_Pedido"] > 0]
-                        if "Almacen" in df_rect.columns and "Almacen" in df_sla_con_bd.columns:
+                        if "Almacen" in df_rect_rank.columns and "Almacen" in df_sla_con_bd.columns:
                             claves_bd = set(zip(df_sla_con_bd["Almacen"].astype(str), df_sla_con_bd["Pedido"].astype(str)))
                             mask_rect_bd = [
                                 (str(a), str(p)) in claves_bd
-                                for a, p in zip(df_rect["Almacen"], df_rect["Pedido"])
+                                for a, p in zip(df_rect_rank["Almacen"], df_rect_rank["Pedido"])
                             ]
-                            df_rect_con_bd = df_rect[mask_rect_bd]
+                            df_rect_con_bd = df_rect_rank[mask_rect_bd]
                         else:
                             peds_con_bd = set(df_sla_con_bd["Pedido"].dropna().unique())
-                            df_rect_con_bd = df_rect[df_rect["Pedido"].isin(peds_con_bd)]
+                            df_rect_con_bd = df_rect_rank[df_rect_rank["Pedido"].isin(peds_con_bd)]
                         grp_rect_bd = df_rect_con_bd.groupby(cols_rect_grp, as_index=False).size().rename(columns={"size": "Lineas_Grab_BD"})
                         df_t_grp = df_t_grp.merge(grp_rect_bd, on=cols_rect_grp, how="left")
                         df_t_grp["Lineas_Grab_BD"] = df_t_grp["Lineas_Grab_BD"].fillna(0).astype(int)
@@ -1475,7 +1750,7 @@ try:
                     df_t_grp["% Líneas Rect."] = np.where(
                         df_t_grp["Lineas_Pedidos"] > 0,
                         (df_t_grp["Lineas_Grab_BD"] / df_t_grp["Lineas_Pedidos"]) * 100.0,
-                        0.0
+                        np.nan
                     )
 
                     if "Almacen" not in df_t_grp.columns:
@@ -1963,7 +2238,7 @@ try:
                     opciones_tienda_sust = ["Todas las Tiendas"] + tiendas_sust_opciones
                     tienda_final_filtro = st.selectbox("Seleccionar Tienda a Analizar:", opciones_tienda_sust, index=0)
 
-                    df_sust_analisis_filtrada = df_sust_analisis if tienda_final_filtro == "Todas las Tiendas" else df_sust_analisis[df_sust_analisis["Tienda"].astype(str).str.contains(tienda_final_filtro, case=False, na=False)].copy()
+                    df_sust_analisis_filtrada = df_sust_analisis if tienda_final_filtro == "Todas las Tiendas" else df_sust_analisis[df_sust_analisis["Tienda"].astype(str).str.strip() == str(tienda_final_filtro).strip()].copy()
 
                     busqueda_pedido_sust = st.text_input("🔍 Filtrar exclusivamente por Número de Pedido:", "", key="txt_ped_h4_val")
                     if busqueda_pedido_sust:
@@ -2020,10 +2295,10 @@ try:
                     df_r_area_base = df_r_area_base[df_r_area_base["Tienda"].astype(str) == str(t_area_sel)]
 
                 if "Area_Salida" not in df_r_area_base.columns:
-                    df_r_area_base["Area_Salida"] = "Sin Clasificar"
+                    df_r_area_base["Area_Salida"] = "Sin Area"
                 else:
-                    df_r_area_base["Area_Salida"] = df_r_area_base["Area_Salida"].fillna("Sin Clasificar").astype(str).str.strip()
-                    df_r_area_base["Area_Salida"] = df_r_area_base["Area_Salida"].replace(["-", "--", "- ", "", "nan", "None"], "Sin Clasificar")
+                    df_r_area_base["Area_Salida"] = df_r_area_base["Area_Salida"].fillna("Sin Area").astype(str).str.strip()
+                    df_r_area_base["Area_Salida"] = df_r_area_base["Area_Salida"].replace(["-", "--", "- ", "", "nan", "None", "Sin Clasificar"], "Sin Area")
 
                 col_motivo_area = "Motivo_Clean" if "Motivo_Clean" in df_r_area_base.columns else ("Motivo" if "Motivo" in df_r_area_base.columns else None)
                 if col_motivo_area:
@@ -2060,6 +2335,20 @@ try:
                     Monto_Confirmado=("Monto_Confirmado", "sum")
                 ).reset_index(drop=True)
 
+                mapa_colores_area = {
+                    "11": "#E63946",      # Rojo
+                    "21": "#48CAE4",      # Celeste
+                    "22": "#0056B3",      # Azul
+                    "23": "#2BA884",      # Verde
+                    "16": "#FFD166",      # Amarillo
+                    "14": "#8E44AD",      # Violeta
+                    "95": "#F48FB1",      # Rosa
+                    "13": "#F77F00",      # Naranja
+                    "12": "#CBD5E1",      # Gris claro
+                    "24": "#64748B",      # Gris medio (respaldo)
+                    "Sin Area": "#94A3B8"
+                }
+
                 col_g1, col_g2 = st.columns(2)
 
                 with col_g1:
@@ -2068,7 +2357,8 @@ try:
 
                     fig_area_monto = px.bar(
                         tb_area_graf_monto, x="Area_Salida", y="Monto_Confirmado",
-                        color="Area_Salida", text="Monto_Texto",
+                        color="Area_Salida", color_discrete_map=mapa_colores_area,
+                        text="Monto_Texto",
                         title="<b>Monto Neto Confirmado ($) por Sector</b>"
                     )
                     fig_area_monto.update_traces(textposition='outside')
@@ -2086,7 +2376,8 @@ try:
 
                     fig_area_lineas = px.bar(
                         tb_area_graf_lineas, x="Area_Salida", y="Lineas_Rectificadas",
-                        color="Area_Salida", text="Lineas_Rectificadas",
+                        color="Area_Salida", color_discrete_map=mapa_colores_area,
+                        text="Lineas_Rectificadas",
                         title="<b>Cantidad de Líneas Confirmadas por Sector</b>"
                     )
                     fig_area_lineas.update_traces(textposition='outside')
