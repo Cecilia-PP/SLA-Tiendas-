@@ -1314,27 +1314,29 @@ try:
 
         # HOJA 1
         if hoja_activa == "📊 1. Ranking SLA por Almacén y Tienda":
-            st.subheader("📊 Ranking SLA por Almacén y Tienda")
-
             df_sla_rank = df_sla.copy()
             df_rect_rank = df_rect.copy() if not df_rect.empty else pd.DataFrame()
+            nota_excl_bd = ""
             if "Lineas_Pedido" in df_sla_rank.columns and (df_sla_rank["Lineas_Pedido"] == 0).any():
                 cant_sin_bd = int((df_sla_rank["Lineas_Pedido"] == 0).sum())
-                excluir_sin_bd_rank = st.checkbox(
-                    f"Excluir del Ranking SLA los pedidos sin respaldo en BDMVTAL ({cant_sin_bd:,} pedidos)",
-                    value=True,
-                    key="h1_excl_sin_bdmvtal",
-                    help="Evita que tiendas o supervisores cuyos despachos originales no vinieron exportados en BDMVTAL aparezcan con 100% de pedidos rectificados. Las Hojas 2 a 7 siguen mostrando el 100% de las rectificaciones."
+                nota_excl_bd = (
+                    f"Se excluyen automáticamente del Ranking SLA {cant_sin_bd:,} pedidos sin respaldo en BDMVTAL "
+                    "para evitar que tiendas o supervisores cuyos despachos originales no vinieron exportados aparezcan con 100% de pedidos rectificados. "
+                    "Las Hojas 2 a 7 siguen mostrando el 100% de las rectificaciones."
                 )
-                if excluir_sin_bd_rank:
-                    df_sla_rank = df_sla_rank[df_sla_rank["Lineas_Pedido"] > 0].copy()
-                    if not df_rect_rank.empty:
-                        if "Almacen" in df_rect_rank.columns and "Almacen" in df_sla_rank.columns:
-                            claves_validas_h1 = set(zip(df_sla_rank["Almacen"].astype(str), df_sla_rank["Pedido"].astype(str)))
-                            mask_r_h1 = [(str(a), str(p)) in claves_validas_h1 for a, p in zip(df_rect_rank["Almacen"], df_rect_rank["Pedido"])]
-                            df_rect_rank = df_rect_rank[mask_r_h1].copy()
-                        else:
-                            df_rect_rank = df_rect_rank[df_rect_rank["Pedido"].isin(set(df_sla_rank["Pedido"].dropna().unique()))].copy()
+                df_sla_rank = df_sla_rank[df_sla_rank["Lineas_Pedido"] > 0].copy()
+                if not df_rect_rank.empty:
+                    if "Almacen" in df_rect_rank.columns and "Almacen" in df_sla_rank.columns:
+                        claves_validas_h1 = set(zip(df_sla_rank["Almacen"].astype(str), df_sla_rank["Pedido"].astype(str)))
+                        mask_r_h1 = [(str(a), str(p)) in claves_validas_h1 for a, p in zip(df_rect_rank["Almacen"], df_rect_rank["Pedido"])]
+                        df_rect_rank = df_rect_rank[mask_r_h1].copy()
+                    else:
+                        df_rect_rank = df_rect_rank[df_rect_rank["Pedido"].isin(set(df_sla_rank["Pedido"].dropna().unique()))].copy()
+
+            if nota_excl_bd:
+                st.subheader("📊 Ranking SLA por Almacén y Tienda", help=nota_excl_bd)
+            else:
+                st.subheader("📊 Ranking SLA por Almacén y Tienda")
 
             tot_pedidos_global = len(df_sla_rank)
             tot_pedidos_rectif_global = (df_sla_rank["Casuistica"] != "Pedido Perfecto").sum()
